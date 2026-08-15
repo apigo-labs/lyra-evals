@@ -1,0 +1,2 @@
+{"case_id":"hle-fixture-001","prompt":"Synthetic fixture: What is the chemical symbol for gold? Return only the symbol.","expected":"Au","fixture_response":{"output_text":"Au","attempt_models":["qwen-fixture"],"cost_usd":0.001}}
+{"case_id":"hle-fixture-002","prompt":"Synthetic fixture: What is 6 multiplied by 7? Return only the number.","expected":"42","fixture_response":{"output_text":"42","attempt_models":["qwen-fixture"],"cost_usd":0.001}}

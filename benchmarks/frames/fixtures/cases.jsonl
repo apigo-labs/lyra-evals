@@ -1,0 +1,1 @@
+{"case_id":"frames-fixture-1","prompt":"Return the exact answer to: What is two plus two?","expected":"4","metadata":{"development_split":"fixture"},"fixture_response":{"choices":[{"message":{"content":"Exact Answer: 4"}}],"model":"fixture-vohu","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}}

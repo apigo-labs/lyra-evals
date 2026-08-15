@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tidemind.dev/vohu-evals/official-reference.schema.json",
+  "type": "object",
+  "required": ["schema_version", "model", "benchmark", "score", "metric", "source", "protocol", "comparability"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "model": {"type": "string", "minLength": 1},
+    "benchmark": {"type": "string", "minLength": 1},
+    "score": {"type": "number"},
+    "metric": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["publisher", "url", "published_at", "accessed_at"],
+      "properties": {
+        "publisher": {"type": "string"},
+        "url": {"type": "string", "format": "uri"},
+        "published_at": {"type": "string", "format": "date"},
+        "accessed_at": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": true
+    },
+    "protocol": {"type": "object"},
+    "comparability": {"enum": ["comparable", "reference_only", "not_comparable"]}
+  },
+  "additionalProperties": true
+}

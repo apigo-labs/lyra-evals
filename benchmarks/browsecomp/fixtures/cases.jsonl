@@ -1,0 +1,1 @@
+{"case_id":"fixture-1","prompt":"Return the exact answer beta.","expected":"beta","fixture_response":{"output_text":"beta","attempt_models":["qwen-fixture"],"citations":[{"type":"url_citation","url":"https://example.com"}]}}

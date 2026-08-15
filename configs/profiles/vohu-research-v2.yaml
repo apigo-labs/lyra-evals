@@ -1,0 +1,13 @@
+schema_version: "1.0"
+profile: vohu-research-v2
+gateway_model: vohu/research-benchmark@v2
+gateway_protocol: openai_chat_completions
+composition_source: workspace_custom
+custom_model: vohu/research-benchmark
+expected_version: 2
+candidate_models:
+  - glm-5.2
+  - kimi-k3
+synthesizer_model: minimax-m3
+required_origin_allowlist: china-models-v1
+primary_score: true

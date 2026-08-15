@@ -1,0 +1,39 @@
+name: browsecomp
+display_name: BrowseComp
+protocol_version: 1.1-openai-652c89d-exact-or-final-anchored
+implementation_status: verified
+metric: accuracy
+capabilities:
+  web_search: true
+dataset:
+  source: https://github.com/openai/simple-evals/blob/652c89d0ca9df547706735883097e9537d40dc47/browsecomp_eval.py
+  revision: 652c89d0ca9df547706735883097e9537d40dc47
+  subset: official
+  license: MIT
+  access: public-encrypted-do-not-disclose-items
+  format: csv
+  expected_count: 1266
+  ids_sha256: b0ba8a8e5a7b26867e80796da48d44a386f40df61affb13d37809f04dd865434
+  required_fields: [problem, answer, problem_topic, canary]
+  artifacts:
+    - url: https://openaipublic.blob.core.windows.net/simple-evals/browse_comp_test_set.csv
+      path: browse_comp_test_set.csv
+      sha256: 7b24471cd5b3eb2a46830a14802b5c029ea62f488ff75a0f88af7923d1454abf
+stages:
+  smoke:
+    sample_n: 20
+    seed: 0
+  calibration:
+    sample_n: 100
+    seed: 0
+  publication:
+    sample_n: 1266
+    seed: 0
+official_evaluator:
+  source: https://github.com/openai/simple-evals/blob/652c89d0ca9df547706735883097e9537d40dc47/browsecomp_eval.py
+  revision: 652c89d0ca9df547706735883097e9537d40dc47
+  judge_model: gpt-4o-2024-08-06
+  judge_temperature: 0
+  parser: "strict stripped Exact Answer equality, otherwise final line-anchored correct: (yes|no); missing verdict is no"
+  upstream_bug_note: frozen source returns regex group 0 but compares against group 1 values; v1.1 also prevents reasoning text such as incorrect:no from shadowing the final verdict field
+comparability: same_dataset_reference_only

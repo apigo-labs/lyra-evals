@@ -1,0 +1,27 @@
+schema_version: "1.0"
+campaign: text-v1
+protocol: openai_chat_completions
+gateway_model: apigo/vohu
+concurrency: 4
+latency_probe_concurrency: 1
+preflight_max_usd: 1
+budget:
+  max_usd: 500
+  max_requests: 10000
+  max_wall_time_seconds: 86400
+runs:
+  - benchmark: gpqa
+    profile: vohu-quality-v1
+    trials: 3
+  - benchmark: hle
+    profile: vohu-quality-v1
+    trials: 3
+  - benchmark: ifeval
+    profile: vohu-quality-v1
+    trials: 3
+  - benchmark: gpqa
+    profile: vohu-budget-v1
+    trials: 1
+  - benchmark: gpqa
+    profile: vohu-fast-v1
+    trials: 1

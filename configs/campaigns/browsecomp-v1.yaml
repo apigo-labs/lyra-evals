@@ -1,0 +1,17 @@
+schema_version: "1.0"
+campaign: browsecomp-v1
+protocol: openai_chat_completions
+gateway_model: vohu/research-benchmark@v1
+requires_web_search_preflight: true
+requires_citations_preflight: false
+concurrency: 4
+latency_probe_concurrency: 1
+preflight_max_usd: 1
+budget:
+  max_usd: 500
+  max_requests: 10000
+  max_wall_time_seconds: 86400
+runs:
+  - benchmark: browsecomp
+    profile: vohu-research-v1
+    trials: 1

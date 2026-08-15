@@ -1,0 +1,19 @@
+name: gpqa
+display_name: GPQA Diamond
+protocol_version: 0.2-source-frozen
+implementation_status: scaffold
+metric: accuracy
+capabilities:
+  web_search: false
+dataset:
+  source: https://huggingface.co/datasets/Idavidrein/gpqa/tree/633f5ee89ab8ad4522a9f850766b73f62147ffdd
+  revision: 633f5ee89ab8ad4522a9f850766b73f62147ffdd
+  subset: gpqa_diamond
+  expected_count: 198
+  license: CC-BY-4.0-plus-gated-terms
+  access: gated
+  artifacts: []
+official_evaluator:
+  source: https://github.com/idavidrein/gpqa/tree/56686c06f5e19865c153de0fdb11be3890014df7
+  revision: 56686c06f5e19865c153de0fdb11be3890014df7
+publication_blocker: authorized dataset artifact SHA-256 and choice-shuffle protocol are missing

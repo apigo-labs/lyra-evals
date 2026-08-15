@@ -1,0 +1,20 @@
+name: hle
+display_name: Humanity's Last Exam Text-Derived
+protocol_version: 0.2-source-frozen
+implementation_status: scaffold
+metric: exact_match
+capabilities:
+  web_search: false
+dataset:
+  source: https://huggingface.co/datasets/cais/hle/tree/5a81a4c7271a2a2a312b9a690f0c2fde837e4c29
+  revision: 5a81a4c7271a2a2a312b9a690f0c2fde837e4c29
+  subset: vohu-text-only-derived
+  official_full_count: 2500
+  license: MIT-plus-gated-terms
+  access: gated
+  artifacts: []
+official_evaluator:
+  source: https://github.com/centerforaisafety/hle/tree/73ae974b1844c3ffa64c3f4343d9f1f259575700
+  revision: 73ae974b1844c3ffa64c3f4343d9f1f259575700
+comparability: not-comparable-to-official-hle
+publication_blocker: authorized artifact and frozen image-false ID manifest are missing

@@ -1,0 +1,2 @@
+{"case_id":"ifeval-fixture-001","prompt":"Synthetic fixture: answer with exactly the prefix RESULT: and at most three words.","expected":true,"metadata":{"checks":{"prefix":"RESULT:","max_words":3}},"fixture_response":{"output_text":"RESULT: done","attempt_models":["qwen-fixture"],"cost_usd":0.001}}
+{"case_id":"ifeval-fixture-002","prompt":"Synthetic fixture: answer without using the word forbidden.","expected":true,"metadata":{"checks":{"forbidden":"forbidden"}},"fixture_response":{"output_text":"Allowed response","attempt_models":["qwen-fixture"],"cost_usd":0.001}}

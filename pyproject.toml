@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vohu-evals"
+version = "0.1.0"
+description = "Private evaluation runner for APIGO VOHU"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "absl-py>=2.3,<3",
+  "httpx>=0.28,<1",
+  "immutabledict>=4.2,<5",
+  "jsonschema>=4.25,<5",
+  "langdetect>=1.0.9,<2",
+  "nltk>=3.9,<4",
+  "PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+vohu-eval = "vohu_evals.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vohu_evals", "src/instruction_following_eval"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["src/instruction_following_eval"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"benchmarks/browsecomp/plugin.py" = ["E501"] # Frozen upstream evaluator prompt.
+"benchmarks/draco/plugin.py" = ["E501", "RUF001"] # Frozen upstream agent/judge prompts.

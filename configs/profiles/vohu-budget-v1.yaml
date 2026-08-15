@@ -1,0 +1,10 @@
+schema_version: "1.0"
+profile: vohu-budget-v1
+gateway_model: apigo/vohu
+gateway_protocol: openai_chat_completions
+composition_source: platform
+official_mode: apigo/vohu-budget
+expected_version: 3
+composition_snapshot: official-compositions-orbstack-20260810
+required_origin_allowlist: china-models-v1
+primary_score: false

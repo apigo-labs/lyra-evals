@@ -1,0 +1,10 @@
+schema_version: "1.0"
+profile: vohu-quality-v1
+gateway_model: apigo/vohu
+gateway_protocol: openai_chat_completions
+composition_source: platform
+official_mode: apigo/vohu-quality
+expected_version: 5
+composition_snapshot: official-compositions-orbstack-20260810-v2
+required_origin_allowlist: china-models-v1
+primary_score: true

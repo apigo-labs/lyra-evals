@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0",
+  "as_of": "2026-08-10",
+  "comparability": "reference_only",
+  "same_protocol_note": "The cited vendors do not publish the four official IFEval metrics for these model releases.",
+  "systems": {
+    "claude_opus_5": {
+      "display_name": "Claude Opus 5",
+      "official_ifeval_available": false,
+      "scores": {
+        "hle_no_tools_percent": 56.3,
+        "hle_with_tools_percent": 64.7,
+        "browsecomp_percent": 90.8
+      },
+      "source_url": "https://www-cdn.anthropic.com/b514064af1408018e64b1ad24e7d5e75850b4ffd/Claude%20Opus%205%20System%20Card.pdf"
+    },
+    "claude_fable_5": {
+      "display_name": "Claude Fable 5",
+      "official_ifeval_available": false,
+      "scores": {
+        "hle_no_tools_percent": 56.5,
+        "hle_with_tools_percent": 63.9
+      },
+      "source_url": "https://www-cdn.anthropic.com/b514064af1408018e64b1ad24e7d5e75850b4ffd/Claude%20Opus%205%20System%20Card.pdf"
+    },
+    "gpt_5_6_sol": {
+      "display_name": "GPT-5.6 Sol",
+      "official_ifeval_available": false,
+      "scores": {
+        "gpqa_diamond_percent": 94.6,
+        "browsecomp_percent": 90.4,
+        "agents_last_exam_percent": 52.7
+      },
+      "source_url": "https://openai.com/index/gpt-5-6/"
+    },
+    "openrouter_fusion": {
+      "display_name": "OpenRouter Fusion (Fable 5 + GPT-5.5, synthesized by Opus 4.8)",
+      "official_ifeval_available": false,
+      "scores": {
+        "draco_percent": 69.0,
+        "solo_fable_5_percent": 65.3,
+        "solo_gpt_5_5_percent": 60.0,
+        "solo_opus_4_8_percent": 58.8
+      },
+      "evaluated_tasks": 100,
+      "solo_fable_completed_tasks": 93,
+      "source_url": "https://openrouter.ai/blog/announcements/fusion-beats-frontier/"
+    }
+  }
+}

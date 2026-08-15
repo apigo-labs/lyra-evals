@@ -1,0 +1,41 @@
+name: draco
+display_name: DRACO Web Research
+protocol_version: 1.0-openrouter-77483ab
+implementation_status: verified
+metric: draco_rubric_score
+capabilities:
+  web_search: true
+  max_tool_calls: 16
+dataset:
+  source: https://huggingface.co/datasets/perplexity-ai/draco/tree/ce076749809027649ebd331bcb70f42bf720d387
+  revision: ce076749809027649ebd331bcb70f42bf720d387
+  subset: official-100
+  license: MIT
+  access: public
+  format: jsonl
+  expected_count: 100
+  expected_criteria_count: 3934
+  id_field: id
+  ids_sha256: a7d3671cec072c03a47cd61f40e149fc1ad9ef5f2b0aee02ab980b0133cb4ff3
+  artifacts:
+    - url: https://huggingface.co/datasets/perplexity-ai/draco/resolve/ce076749809027649ebd331bcb70f42bf720d387/test.jsonl?download=true
+      path: test.jsonl
+      sha256: e35bfe78cd827fa1d541b79fbc7bc7b91966d3227d8742c83e99d26d4ac4679a
+official_evaluator:
+  source: https://github.com/OpenRouterTeam/benchmark-harness/tree/77483ab4d585baeaaacd4dab9f4f60cc7823e65b/src/benchmarks/draco
+  revision: 77483ab4d585baeaaacd4dab9f4f60cc7823e65b
+  judge_model: gemini-3.1-pro-preview
+  judge_runs: 3
+  judge_temperature: 0.2
+  judge_reasoning_effort: low
+  criterion_concurrency: 10
+  timeout_seconds: 1800
+stages:
+  smoke:
+    sample_n: 5
+  calibration:
+    sample_n: 20
+  publication:
+    sample_n: 100
+comparability: protocol_experiment_only
+publication_blocker: APIGO VOHU does not yet expose the frozen Exa web_search/web_fetch/bash tool contract used by the OpenRouter Fusion run

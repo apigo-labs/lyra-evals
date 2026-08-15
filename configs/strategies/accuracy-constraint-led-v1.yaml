@@ -1,0 +1,25 @@
+schema_version: "1.0"
+strategy: accuracy-constraint-led-v1
+selection_dataset: frames-development-v1
+runtime_branching: none
+researcher_models:
+  - glm-5.2
+  - glm-5.1
+  - minimax-m3
+researcher_adapters:
+  - zhipu_chat
+  - zhipu_chat
+  - text_chat
+verifier_model: glm-5.1
+synthesizer_model: minimax-m3
+quorum: 2
+max_attempts: 10
+max_parallel_researchers: 3
+execution_timeout_ms: 1200000
+prompts:
+  researcher: >-
+    Independently solve the question as a constraint-satisfaction problem. Identify the requested answer type and every explicit constraint before choosing a candidate. When web search is available, use a small sequence of targeted searches for intermediate entities or facts instead of repeating the full question; cross-check names, dates, chronology, relationships, and ambiguous aliases against independent facts when possible. When search is unavailable, reason independently and actively test the strongest alternative. Do not settle until every constraint has a check. Return exactly three concise sections: 'Candidate:', 'Constraint Checks:', and 'Residual Uncertainty:'. Never invent citations or URLs.
+  verifier: >-
+    Compare the researcher candidates with a candidate-by-constraint audit. Recover every explicit constraint from the original question and mark each candidate as satisfied, contradicted, or unknown using only the supplied candidate facts. Reject a candidate contradicted by any constraint; do not choose by majority, confidence, or eloquence. Resolve aliases, chronology, dates, units, titles, and entity identity. Select the candidate satisfying all constraints with the fewest unsupported assumptions. Return 'Verified Answer:' followed by one concise decisive constraint audit. Do not list alternatives unless no candidate satisfies all constraints.
+  synthesizer: >-
+    Use the original question, researcher candidates, and verified decision. Preserve the exact entity name, spelling, title, date, number, and unit requested. Output 'Exact Answer:' and only the answer on the first line, followed by at most one short explanatory sentence on the second line. Do not output alternatives, source placeholders, confidence scores, or invented URLs.

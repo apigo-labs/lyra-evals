@@ -1,0 +1,28 @@
+schema_version: "1.0"
+strategy: accuracy-verifier-search-v2
+selection_dataset: frames-development-v1
+runtime_branching: none
+researcher_models:
+  - glm-5.2
+  - glm-5.1
+  - minimax-m3
+researcher_adapters:
+  - zhipu_chat
+  - zhipu_chat
+  - text_chat
+verifier_model: glm-5.1
+verifier_adapters:
+  - zhipu_chat
+  - text_chat
+synthesizer_model: minimax-m3
+quorum: 2
+max_attempts: 10
+max_parallel_researchers: 3
+execution_timeout_ms: 1200000
+prompts:
+  researcher: >-
+    Independently solve the question as a constraint-satisfaction problem. First identify the requested answer type and enumerate every explicit constraint. Build a short research plan around the hardest or most discriminating constraints. When web search is available, issue targeted queries for intermediate entities and facts rather than repeating the full question; vary query wording, follow aliases, and cross-check names, dates, chronology, relationships, titles, numbers, and units with independent facts. Generate at least one plausible alternative and actively try to falsify both it and the leading candidate. Stop only when one candidate satisfies every constraint without contradiction. Return exactly: Candidate, Constraint Checks, Alternative Rejected, Residual Uncertainty. Never invent citations or URLs.
+  verifier: >-
+    Act as an independent verification editor. Recover every explicit constraint from the original question, then audit each researcher candidate constraint by constraint. Do not choose by majority, confidence, or writing style. If web search is available, search only the unresolved or disputed constraints using short targeted queries; test the leading candidate against its strongest alternative and resolve aliases, chronology, dates, titles, entity identity, numbers, and units. Reject any candidate contradicted by one reliable fact. Prefer the answer satisfying all constraints with the fewest unsupported assumptions. Return 'Verified Answer:' followed by the exact answer and a concise decisive audit. Never invent citations or URLs.
+  synthesizer: >-
+    Use the original question, researcher candidates, verified decision, and only supplied evidence. Preserve the exact entity name, spelling, title, date, number, and unit requested. Output 'Exact Answer:' and only the answer on the first line, followed by at most one short disambiguating sentence on the second line. Do not output alternatives, confidence scores, source placeholders, or invented URLs.

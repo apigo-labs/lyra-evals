@@ -1,0 +1,13 @@
+schema_version: "1.0"
+profile: vohu-research-v5
+gateway_model: apigo/vohu-research
+gateway_protocol: openai_chat_completions
+composition_source: platform
+official_mode: apigo/vohu-research
+expected_version: 5
+expected_snapshot_hash: 6c8e0eb81f1ebfab87a83a65e1f3632ef72eb08b5745146ab06bef573a25b323
+expected_schema_version: 3
+expected_evidence_mode: answer_first
+composition_snapshot: official-compositions-orbstack-20260813-accuracy-v5-researcher-retries
+required_origin_allowlist: china-models-v1
+primary_score: true

@@ -1,0 +1,2 @@
+{"case_id":"gpqa-fixture-001","prompt":"Synthetic fixture: choose the even number. A) 3 B) 4 C) 5 D) 7. Return only A, B, C, or D.","expected":"B","fixture_response":{"output_text":"B","attempt_models":["qwen-fixture"],"cost_usd":0.001}}
+{"case_id":"gpqa-fixture-002","prompt":"Synthetic fixture: choose the prime number. A) 8 B) 9 C) 11 D) 12. Return only A, B, C, or D.","expected":"C","fixture_response":{"output_text":"C","attempt_models":["qwen-fixture"],"cost_usd":0.001}}

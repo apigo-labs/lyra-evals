@@ -1,0 +1,42 @@
+name: frames
+display_name: FRAMES Development
+protocol_version: 1.0-google-58d9fb6-live-web-dev
+implementation_status: verified
+metric: accuracy
+capabilities:
+  web_search: true
+dataset:
+  source: https://huggingface.co/datasets/google/frames-benchmark
+  revision: 58d9fb6330f3ab1316d1eca12e5e8ef23dcc22ef
+  subset: official-test-used-as-development-only
+  license: Apache-2.0
+  access: public
+  format: tsv
+  expected_count: 824
+  ids_sha256: e3465b580a7e9c2478d0041e433e461207ec3b96b912beb0f1d80c630b2b658e
+  required_fields: [Prompt, Answer, reasoning_types]
+  artifacts:
+    - url: https://huggingface.co/datasets/google/frames-benchmark/resolve/58d9fb6330f3ab1316d1eca12e5e8ef23dcc22ef/test.tsv
+      path: test.tsv
+      sha256: 4255093c93b595b5b04c7c8dde290b48ec87d72ca0fb0b760d9dd02740d669ff
+split_policy:
+  algorithm: sha256-rank-v1
+  seed: vohu-frames-development-v1
+  dev_n: 100
+  holdout_n: 100
+stages:
+  smoke:
+    split: dev
+    sample_n: 20
+  calibration:
+    split: dev
+    sample_n: 100
+  publication:
+    split: holdout
+    sample_n: 100
+official_evaluator:
+  judge_model: gpt-4o-2024-08-06
+  judge_temperature: 0
+  parser: "strict stripped Exact Answer equality, otherwise final line-anchored correct: (yes|no); missing verdict is no"
+  usage: internal strategy development only
+comparability: internal_development_only

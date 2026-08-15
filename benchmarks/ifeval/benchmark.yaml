@@ -1,0 +1,53 @@
+name: ifeval
+display_name: IFEval
+protocol_version: 1.0-google-01553912
+implementation_status: verified
+metric: instruction_level_strict
+capabilities:
+  web_search: false
+dataset:
+  source: https://github.com/google-research/google-research/tree/015539128d9a7dbe14b5f5308a198a15da808949/instruction_following_eval
+  revision: 015539128d9a7dbe14b5f5308a198a15da808949
+  subset: official
+  license: Apache-2.0
+  access: public
+  format: jsonl
+  expected_count: 541
+  expected_instruction_count: 834
+  id_field: key
+  ids_sha256: e0665eb645a04dd102e023388884c54ed8519e9b288eac426bb447a3d607f5f1
+  artifacts:
+    - url: https://raw.githubusercontent.com/google-research/google-research/015539128d9a7dbe14b5f5308a198a15da808949/instruction_following_eval/data/input_data.jsonl
+      path: input_data.jsonl
+      sha256: 67ffeee0fcb87c317c5b08a2de85557b4a7e96ada6178aa645b4954fe4b53d49
+stages:
+  smoke:
+    first_n: 20
+  calibration:
+    first_n: 100
+  publication:
+    first_n: 541
+official_evaluator:
+  source: https://github.com/google-research/google-research/tree/015539128d9a7dbe14b5f5308a198a15da808949/instruction_following_eval
+  revision: 015539128d9a7dbe14b5f5308a198a15da808949
+  license: Apache-2.0
+  integration: vendored-unmodified
+  vendored_files:
+    evaluation_lib.py: 35decc06000718487f44d7deafa6d3f48a8ec0886281edf40162c0265b7d248c
+    instructions.py: 60e086f5342a03ce8e18b64bbcccf86308f523c08aa826707a562150a52f3edf
+    instructions_registry.py: ec92d72c264f6d906978613085db262356174300370a3fffe6fefd5969ce9cfc
+    instructions_util.py: a73797261eee5bf447e279d82a2b700b1bdd3cb1193412dbab1270a85832bc6b
+  resources:
+    revision: 550b6625bcef1f2abff2ff770a5a0d272c9c6b2a
+    artifacts:
+      - url: https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/tokenizers/punkt.zip
+        path: punkt.zip
+        sha256: 51c3078994aeaf650bfc8e028be4fb42b4a0d177d41c012b6a983979653660ec
+      - url: https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/tokenizers/punkt_tab.zip
+        path: punkt_tab.zip
+        sha256: e57f64187974277726a3417ca6f181ec5403676c717672eef6a748a7b20e0106
+  metrics:
+    - prompt_level_strict
+    - instruction_level_strict
+    - prompt_level_loose
+    - instruction_level_loose

@@ -1,0 +1,17 @@
+schema_version: "1.0"
+campaign: frames-development-v12
+protocol: openai_chat_completions
+gateway_model: apigo/vohu-research
+requires_web_search_preflight: true
+requires_citations_preflight: false
+concurrency: 1
+latency_probe_concurrency: 1
+preflight_max_usd: 5
+budget:
+  max_usd: 500
+  max_requests: 10000
+  max_wall_time_seconds: 86400
+runs:
+  - benchmark: frames
+    profile: vohu-research-v20
+    trials: 1
