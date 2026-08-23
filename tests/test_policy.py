@@ -42,6 +42,24 @@ def test_validates_official_snapshot_against_allowlist() -> None:
     }
 
 
+def test_validates_auto_snapshot_against_allowlist() -> None:
+    snapshot = {
+        "modes": {
+            "apigo/vohu-auto": {
+                "schema_version": 1,
+                "router_model": "kimi",
+                "expert_models": [{"model": "minimax"}],
+                "finalizer_model": "glm",
+                "max_attempts": 3,
+            }
+        }
+    }
+
+    assert validate_official_composition_snapshot(
+        frozenset({"kimi", "minimax", "glm"}), snapshot
+    ) == {"apigo/vohu-auto": ("kimi", "minimax", "glm")}
+
+
 def test_validates_accuracy_research_snapshot_with_independent_model_reuse() -> None:
     snapshot = {
         "modes": {
@@ -115,4 +133,21 @@ def test_rejects_profile_composition_mismatch() -> None:
         validate_expected_composition(
             frozenset({"glm-5.2", "kimi-k3", "qwen3.8-max"}),
             ("glm-5.2", "qwen3.8-max"),
+        )
+
+
+def test_dynamic_auto_accepts_non_empty_subset_of_frozen_pool() -> None:
+    assert validate_expected_composition(
+        frozenset({"kimi", "minimax", "glm"}),
+        ("kimi",),
+        match="subset",
+    ) == ("kimi",)
+
+
+def test_dynamic_auto_rejects_model_outside_frozen_pool() -> None:
+    with pytest.raises(CompositionPolicyError, match=r"unexpected=.*qwen"):
+        validate_expected_composition(
+            frozenset({"kimi", "minimax", "glm"}),
+            ("kimi", "qwen"),
+            match="subset",
         )

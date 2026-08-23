@@ -15,7 +15,9 @@ from vohu_evals.cli import (
     _preflight,
     _profile_policy,
     _target_validation_failures,
+    _validate_preflight_result,
 )
+from vohu_evals.models import InvocationResult
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,7 +38,19 @@ def isolated_local_targets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
         snapshot = snapshots.setdefault(snapshot_name, {"snapshot_id": snapshot_name, "modes": {}})
         mode = profile["official_mode"]
         version = int(profile["expected_version"])
-        if mode == "apigo/vohu-research":
+        if mode == "apigo/vohu-auto":
+            models = ("kimi-k3", "minimax-m3", "glm-5.2")
+            allowed_models.update(models)
+            snapshot["modes"][mode] = {
+                "version": version,
+                "snapshot_hash": profile["expected_snapshot_hash"],
+                "schema_version": profile["expected_schema_version"],
+                "router_model": models[0],
+                "expert_models": [{"model": models[1]}],
+                "finalizer_model": models[2],
+                "max_attempts": 3,
+            }
+        elif mode == "apigo/vohu-research":
             if version <= 5:
                 models = ("glm-5.2", "kimi-k3", "minimax-m3")
             elif version <= 9:
@@ -93,6 +107,57 @@ def test_preflight_defaults_to_no_network(capsys: pytest.CaptureFixture[str]) ->
     assert payload["requires_web_search"] is True
     assert payload["requires_citations"] is True
     assert payload["expected_models"] == ["glm-5.1", "glm-5.2", "minimax-m3"]
+
+
+def test_auto_profile_freezes_dynamic_model_pool(capsys: pytest.CaptureFixture[str]) -> None:
+    identity, gateway_model, gateway_protocol, expected_models, allowed = _profile_policy(
+        ROOT, "vohu-auto-v1"
+    )
+
+    assert identity == "apigo/vohu-auto"
+    assert gateway_model == "apigo/vohu-auto"
+    assert gateway_protocol == "openai_chat_completions"
+    assert expected_models == frozenset({"kimi-k3", "minimax-m3", "glm-5.2"})
+    assert expected_models.issubset(allowed)
+
+    assert _doctor("ifeval", "vohu-auto-v1") in {0, 1}
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["expected_models_match"] == "subset"
+
+
+def test_preflight_rejects_degraded_zero_usage_result() -> None:
+    result = InvocationResult(
+        output_text="",
+        raw_response={},
+        request_id="request",
+        execution_id="execution",
+        response_model="apigo/vohu-auto",
+        attempt_models=("kimi-k3",),
+        attempts=({"model": "kimi-k3", "status": "failed"},),
+        usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        cost_usd=0,
+        latency_ms=1,
+    )
+
+    with pytest.raises(ValueError, match="no output"):
+        _validate_preflight_result(result, requires_citations=False)
+
+
+def test_preflight_accepts_successful_metered_result() -> None:
+    result = InvocationResult(
+        output_text="VOHU_PREFLIGHT_OK",
+        raw_response={},
+        request_id="request",
+        execution_id="execution",
+        response_model="apigo/vohu-auto",
+        attempt_models=("kimi-k3",),
+        attempts=({"model": "kimi-k3", "status": "success"},),
+        usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        cost_usd=0.001,
+        latency_ms=1,
+    )
+
+    _validate_preflight_result(result, requires_citations=False)
 
 
 def test_browsecomp_preflight_does_not_require_observable_citations(

@@ -1,0 +1,12 @@
+schema_version: "1.0"
+profile: vohu-auto-v1
+gateway_model: apigo/vohu-auto
+gateway_protocol: openai_chat_completions
+composition_source: platform
+official_mode: apigo/vohu-auto
+expected_version: 2
+expected_snapshot_hash: 5cce894bc20cd12ffa380d993cd59434a8a0d8e24010f8c1d12e7ed2af694325
+expected_schema_version: 1
+composition_snapshot: official-compositions-orbstack-20260823-auto-v2
+required_origin_allowlist: china-models-v1
+primary_score: true

@@ -49,6 +49,41 @@ def test_platform_audit_reads_reconciled_attempts_usage_and_exact_cost() -> None
     assert audit.attempt_models == ("glm-5.2", "qwen3.8-max")
     assert audit.usage["total_tokens"] == 12
     assert audit.cost_usd == 0.123456
+    assert audit.cost_settled is True
+
+
+def test_platform_audit_can_preserve_unsettled_cost_as_unavailable() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "cost_usd": 0,
+                    "vohu_execution": {
+                        "execution_id": "exec-1",
+                        "attempt_count": 1,
+                        "usage_reconciled": True,
+                        "settlement_status": "pending",
+                        "derived_usage": {"total_tokens": 12},
+                        "attempts": [{"model": "kimi-k3", "status": "success"}],
+                    },
+                },
+            },
+            request=request,
+        )
+
+    audit = PlatformLogsAuditAdapter(
+        "https://website.example/platform",
+        "jwt",
+        "ws_1",
+        transport=httpx.MockTransport(handler),
+        require_settled_cost=False,
+    ).resolve("request-1", "exec-1")
+
+    assert audit.cost_usd == 0
+    assert audit.cost_settled is False
+    assert audit.attempt_models == ("kimi-k3",)
 
 
 def test_platform_audit_refreshes_once_after_unauthorized() -> None:

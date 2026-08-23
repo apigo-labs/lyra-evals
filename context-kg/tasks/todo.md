@@ -2,11 +2,34 @@
 title: VOHU Evals 任务计划与 Review
 tags: [tasks, vohu]
 links: []
-updated: 2026-08-15
+updated: 2026-08-23
 sources: 0
 ---
 
 # VOHU Evals 任务计划与 Review
+
+## IFEval Auto 实测（2026-08-23）
+
+- [x] 核对 OrbStack 运行镜像与 Platform 实时 Auto 投影
+- [x] 为动态 Auto 组合增加“实际模型为冻结模型池子集”的评测契约
+- [x] 冻结本地 Auto v2 target 与 IFEval smoke 预算
+- [x] 运行无题目真实 preflight，核验 attempt、usage 与结算可用性
+- [x] 运行 IFEval 20 题 smoke，固定分母保留系统失败
+- [x] 生成 evidence 并对比历史 IFEval 质量与单位成本
+
+### 边界
+
+- 被测入口固定为 APIGO Gateway 的 `apigo/vohu-auto` Chat Completions，不直连内部模型。
+- Auto 每题可只调用 Router，也可调用 Router、Expert、Finalizer；只允许使用冻结模型池中的非空子集，不能沿用静态模式“每题必须出现全部模型”的判定。
+- 本次实时 composition、运行账本、逐题回答、费用和执行标识仅保存在忽略目录，不进入 Git 或 Context-KG 长期知识。
+- 预算上限是熔断值，不是费用目标；最终以 Platform 审计成本和固定分母得分为准。
+
+### Review
+
+- Auto profile 使用动态模型池子集契约，静态模式继续保持精确组合校验。
+- 预检会拒绝空答案、失败 attempt 和零 usage；默认仍要求 Platform 已结算成本。
+- 本地开发环境可显式保留“usage 已核对但成本未结算”的事实，用于内部 smoke；该状态不能发布为真实零成本，也不放宽 publication 默认门禁。
+- 运行账本、逐题回答、实时组合和成本证据继续只保存在 Git 忽略目录。
 
 ## Targets 本地化（2026-08-15）
 

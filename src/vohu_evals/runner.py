@@ -87,7 +87,11 @@ class EvaluationRunner:
                         result.attempt_models,
                         require_audit=spec.require_attempt_audit,
                     )
-                    validate_expected_composition(spec.expected_models, result.attempt_models)
+                    validate_expected_composition(
+                        spec.expected_models,
+                        result.attempt_models,
+                        match=spec.expected_models_match,
+                    )
                     parsed = benchmark.parse_response(result)
                     if not parsed:
                         self.ledger.fail(

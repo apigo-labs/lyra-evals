@@ -20,6 +20,7 @@ from vohu_evals.models import (
     DEFAULT_RETRY_BACKOFF_SECONDS,
     BenchmarkRequest,
     Budget,
+    InvocationResult,
     RunSpec,
     RunStage,
 )
@@ -47,6 +48,7 @@ PLATFORM_LOGIN_ENV = ("VOHU_USER_EMAIL", "VOHU_USER_PASSWORD")
 TARGETS_DIR_ENV = "VOHU_EVALS_TARGETS_DIR"
 BENCHMARKS = ("gpqa", "hle", "ifeval", "browsecomp", "draco", "frames")
 PROFILES = (
+    "vohu-auto-v1",
     "vohu-quality-v1",
     "vohu-budget-v1",
     "vohu-fast-v1",
@@ -191,7 +193,26 @@ def _profile_policy(
             )
         if int(mode_snapshot["version"]) != int(profile["expected_version"]):
             raise ValueError(f"profile version does not match composition snapshot: {profile_name}")
-        if "researcher_models" in mode_snapshot:
+        if "router_model" in mode_snapshot:
+            if gateway_model != identity:
+                raise ValueError(f"auto profile gateway model mismatch: {profile_name}")
+            for profile_key, snapshot_key in (
+                ("expected_snapshot_hash", "snapshot_hash"),
+                ("expected_schema_version", "schema_version"),
+            ):
+                if profile.get(profile_key) != mode_snapshot.get(snapshot_key):
+                    raise ValueError(
+                        f"profile {profile_key} does not match composition snapshot: {profile_name}"
+                    )
+            experts = mode_snapshot.get("expert_models", [])
+            expected_models = frozenset(
+                [
+                    mode_snapshot["router_model"],
+                    *[expert["model"] for expert in experts],
+                    mode_snapshot["finalizer_model"],
+                ]
+            )
+        elif "researcher_models" in mode_snapshot:
             if gateway_model != identity:
                 raise ValueError(f"accuracy profile gateway model mismatch: {profile_name}")
             for profile_key, snapshot_key in (
@@ -225,6 +246,27 @@ def _profile_policy(
     return identity, gateway_model, gateway_protocol, expected_models, allowed_models
 
 
+def _expected_models_match(mode: str) -> str:
+    return "subset" if mode == "apigo/vohu-auto" else "exact"
+
+
+def _validate_preflight_result(
+    result: InvocationResult, *, requires_citations: bool, require_positive_cost: bool = True
+) -> None:
+    if not result.output_text.strip():
+        raise ValueError("preflight response has no output")
+    if not result.attempts or any(
+        attempt.get("status") not in {"success", "succeeded"} for attempt in result.attempts
+    ):
+        raise ValueError("preflight has no fully successful attempt chain")
+    if not result.usage or int(result.usage.get("total_tokens", 0)) <= 0:
+        raise ValueError("preflight response has no positive observable usage")
+    if require_positive_cost and result.cost_usd <= 0:
+        raise ValueError("preflight response has no positive audited cost")
+    if requires_citations and not result.citations:
+        raise ValueError("Web Search preflight returned no citations")
+
+
 def _preflight(
     config_path: Path,
     profile_name: str,
@@ -249,6 +291,7 @@ def _preflight(
         "profile": profile_name,
         "official_mode": mode,
         "expected_models": sorted(expected_models),
+        "expected_models_match": _expected_models_match(mode),
         "protocol": gateway_protocol,
         "gateway_model": gateway_model,
         "requires_web_search": bool(config.get("requires_web_search_preflight")),
@@ -288,11 +331,16 @@ def _preflight(
         cost_usd=execution_audit.cost_usd,
     )
     validate_china_model_composition(allowed, result.attempt_models, require_audit=True)
-    validate_expected_composition(expected_models, result.attempt_models)
-    if not result.usage:
-        raise ValueError("preflight response has no observable usage")
-    if plan["requires_citations"] and not result.citations:
-        raise ValueError("Web Search preflight returned no citations")
+    validate_expected_composition(
+        expected_models,
+        result.attempt_models,
+        match=_expected_models_match(mode),
+    )
+    _validate_preflight_result(
+        result,
+        requires_citations=plan["requires_citations"],
+        require_positive_cost=execution_audit.cost_settled,
+    )
     print(
         json.dumps(
             {
@@ -300,8 +348,11 @@ def _preflight(
                 "request_id": result.request_id,
                 "execution_id": result.execution_id,
                 "attempt_models": result.attempt_models,
+                "attempt_count": len(result.attempts),
                 "citation_count": len(result.citations),
                 "usage_observed": True,
+                "cost_usd": result.cost_usd,
+                "cost_settled": execution_audit.cost_settled,
             },
             indent=2,
         )
@@ -331,6 +382,7 @@ def _platform_audit_from_env() -> PlatformLogsAuditAdapter:
         fresh_token,
         workspace_id,
         refresh_token=lambda: credentials.ensure_fresh(force=True),
+        require_settled_cost=os.environ.get("VOHU_EVALS_ALLOW_UNSETTLED_COST") != "1",
     )
 
 
@@ -358,6 +410,7 @@ def _doctor(benchmark_name: str, profile_name: str = "vohu-quality-v1") -> int:
         "gateway_model": gateway_model,
         "gateway_protocol": gateway_protocol,
         "expected_models": sorted(expected_models),
+        "expected_models_match": _expected_models_match(mode),
         "environment": environment,
         "platform_token_fresh": token_fresh,
         "readiness_issues": [issue.__dict__ for issue in readiness],
@@ -423,6 +476,7 @@ def _run_plan(
         "profile": profile_name,
         "official_mode": mode,
         "expected_models": sorted(expected_models),
+        "expected_models_match": _expected_models_match(mode),
         "gateway_model": gateway_model,
         "gateway_protocol": gateway_protocol,
         "stage": stage.value,
@@ -463,6 +517,7 @@ def _run_plan(
         allowed_models=allowed_models,
         gateway_protocol=gateway_protocol,
         expected_models=expected_models,
+        expected_models_match=_expected_models_match(mode),
     )
     output = root / "runs" / run_id
     ledger = SQLiteLedger(output / "run.sqlite3")

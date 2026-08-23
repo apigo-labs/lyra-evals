@@ -18,6 +18,7 @@ class ExecutionAudit:
     attempts: tuple[dict[str, Any], ...]
     usage: dict[str, Any]
     cost_usd: float
+    cost_settled: bool = True
 
     @property
     def attempt_models(self) -> tuple[str, ...]:
@@ -45,6 +46,7 @@ class PlatformLogsAuditAdapter:
         poll_interval_seconds: float = 1,
         transport: httpx.BaseTransport | None = None,
         refresh_token: Callable[[], str] | None = None,
+        require_settled_cost: bool = True,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
@@ -56,6 +58,7 @@ class PlatformLogsAuditAdapter:
         self._timeout_seconds = timeout_seconds
         self._poll_interval_seconds = poll_interval_seconds
         self._refresh_token = refresh_token
+        self._require_settled_cost = require_settled_cost
 
     def resolve(self, request_id: str, execution_id: str) -> ExecutionAudit:
         if not request_id or not execution_id:
@@ -105,22 +108,24 @@ class PlatformLogsAuditAdapter:
                 last_reason = "VOHU execution usage is not reconciled"
                 time.sleep(self._poll_interval_seconds)
                 continue
-            if execution.get("settlement_status") != "settled":
-                last_reason = "VOHU execution cost is not settled"
-                time.sleep(self._poll_interval_seconds)
-                continue
             attempts = execution.get("attempts")
             if not isinstance(attempts, list) or len(attempts) != execution.get("attempt_count"):
                 last_reason = "VOHU attempt audit is incomplete"
                 time.sleep(self._poll_interval_seconds)
                 continue
+            usage = execution.get("derived_usage")
+            if not isinstance(usage, dict):
+                raise AuditError("Platform audit derived usage is unavailable")
+            if execution.get("settlement_status") != "settled":
+                if self._require_settled_cost:
+                    last_reason = "VOHU execution cost is not settled"
+                    time.sleep(self._poll_interval_seconds)
+                    continue
+                return ExecutionAudit(execution_id, tuple(attempts), usage, 0.0, False)
             exact_cost = data.get("cost_usd_exact")
             try:
                 cost_usd = float(exact_cost if exact_cost is not None else data["cost_usd"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise AuditError("Platform audit cost is unavailable") from exc
-            usage = execution.get("derived_usage")
-            if not isinstance(usage, dict):
-                raise AuditError("Platform audit derived usage is unavailable")
-            return ExecutionAudit(execution_id, tuple(attempts), usage, cost_usd)
+            return ExecutionAudit(execution_id, tuple(attempts), usage, cost_usd, True)
         raise AuditError(f"Platform audit timed out: {last_reason}")

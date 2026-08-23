@@ -28,6 +28,31 @@ def validate_official_composition_snapshot(
         raise CompositionPolicyError("official composition snapshot has no modes")
     validated: dict[str, tuple[str, ...]] = {}
     for slug, raw in modes.items():
+        if "router_model" in raw:
+            router = str(raw.get("router_model", "")).strip()
+            experts = raw.get("expert_models")
+            finalizer = str(raw.get("finalizer_model", "")).strip()
+            if (
+                raw.get("schema_version") != 1
+                or not router
+                or not isinstance(experts, list)
+                or not experts
+                or any(
+                    not isinstance(expert, dict)
+                    or not isinstance(expert.get("model"), str)
+                    or not expert["model"].strip()
+                    for expert in experts
+                )
+                or not finalizer
+                or raw.get("max_attempts") != 3
+            ):
+                raise CompositionPolicyError(f"{slug} has an invalid auto composition shape")
+            models = (router, *[expert["model"].strip() for expert in experts], finalizer)
+            if len(set(models)) != len(models):
+                raise CompositionPolicyError(f"{slug} has duplicate auto models")
+            validate_china_model_composition(allowed_models, models, require_audit=True)
+            validated[str(slug)] = tuple(models)
+            continue
         if "researcher_models" in raw:
             researchers = raw.get("researcher_models")
             adapters = raw.get("researcher_adapters")
@@ -83,16 +108,23 @@ def validate_official_composition_snapshot(
 
 
 def validate_expected_composition(
-    expected_models: frozenset[str], actual_models: Iterable[str]
+    expected_models: frozenset[str], actual_models: Iterable[str], *, match: str = "exact"
 ) -> tuple[str, ...]:
     actual = tuple(actual_models)
     if not expected_models:
         return actual
     actual_set = frozenset(actual)
-    if actual_set != expected_models:
+    if match not in {"exact", "subset"}:
+        raise ValueError("composition match must be exact or subset")
+    matches = (
+        actual_set == expected_models
+        if match == "exact"
+        else bool(actual_set) and actual_set.issubset(expected_models)
+    )
+    if not matches:
         missing = sorted(expected_models.difference(actual_set))
         unexpected = sorted(actual_set.difference(expected_models))
         raise CompositionPolicyError(
-            f"official composition mismatch; missing={missing}, unexpected={unexpected}"
+            f"official composition mismatch ({match}); missing={missing}, unexpected={unexpected}"
         )
     return actual

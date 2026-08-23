@@ -37,6 +37,10 @@ JWT 审计凭据；必须额外传入 `--execute --confirm-budget-usd <与 max-u
 usage 与最终费用通过 execution id 在 Platform 日志接口带外审计，不向标准响应注入私有字段。默认命令不会
 发起付费请求。
 
+发布级运行默认要求 Platform 已完成费用结算。本地基础设施缺少结算事件时，可仅为内部 smoke 显式设置
+`VOHU_EVALS_ALLOW_UNSETTLED_COST=1`；此时 usage 与 attempt 仍须完整，费用固定记录为不可用的 `0`，不得
+将该值解释或发布为零成本。
+
 `targets/` 保存本地 allowlist 与 composition 快照，整个目录被 Git 忽略。基础离线验证不要求该目录存在；
 `fixture-run`、`preflight`、`run` 和依赖 profile 的诊断命令需要在执行前由受控来源将 target 文件物化到本地。
 仓库不提供真实 target 模板或快照。需要使用其他受控目录时，通过 `VOHU_EVALS_TARGETS_DIR` 指定。

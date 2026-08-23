@@ -85,11 +85,14 @@ class RunSpec:
     allowed_models: frozenset[str]
     gateway_protocol: str = "openai_chat_completions"
     expected_models: frozenset[str] = frozenset()
+    expected_models_match: str = "exact"
     require_attempt_audit: bool = True
     max_retries: int = DEFAULT_MAX_RETRIES
     retry_backoff_seconds: tuple[float, ...] = DEFAULT_RETRY_BACKOFF_SECONDS
 
     def __post_init__(self) -> None:
+        if self.expected_models_match not in {"exact", "subset"}:
+            raise ValueError("expected_models_match must be exact or subset")
         if self.max_retries < 0:
             raise ValueError("max_retries must be non-negative")
         if len(self.retry_backoff_seconds) < self.max_retries + 1:
