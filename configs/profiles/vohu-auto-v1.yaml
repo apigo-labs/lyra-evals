@@ -4,9 +4,9 @@ gateway_model: apigo/vohu-auto
 gateway_protocol: openai_chat_completions
 composition_source: platform
 official_mode: apigo/vohu-auto
-expected_version: 2
-expected_snapshot_hash: 5cce894bc20cd12ffa380d993cd59434a8a0d8e24010f8c1d12e7ed2af694325
-expected_schema_version: 1
-composition_snapshot: official-compositions-orbstack-20260823-auto-v2
+expected_version: 5
+expected_snapshot_hash: c1d4b64d81c8377e1c67245b6630404ee75c73f35a9c670da8bd65a016031fc1
+expected_schema_version: 2
+composition_snapshot: official-compositions-orbstack-20260823-auto-v5
 required_origin_allowlist: china-models-v1
 primary_score: true
