@@ -28,11 +28,17 @@ VOHU 模型标识；外部模型不进入目标调用链。
 worker 不会突破请求上限，进程崩溃后也不会把已发出但尚未落终态的请求当作未消耗额度。Benchmark 的响应
 解析和评分保持串行，避免第三方 evaluator 的进程级状态在多线程之间相互污染。
 
+已冻结 run 若因系统失败或请求额度耗尽而不完整，不修改原 ledger。Recovery run 从来源 ledger 只选择
+`pending` 与 `system_failed` case，把来源 run ID、选择策略、题数和 case 集合哈希写入新的不可变 manifest；
+成功 case 不重复请求。Recovery 自身证据始终为 internal-only，最终通过 combined evidence 以 recovery 结果
+替换来源中的同一 case，再汇总完整固定分母、请求和成本。
+
 ## 核心不变量
 
 - 默认命令和测试不发起真实模型调用；执行与预算必须双重显式确认。
 - run manifest 一经写入不可改变；相同 run 标识只能恢复，不能换配置覆盖。
 - 并发度进入 run manifest 和 run 标识；改变并发度必须产生新的不可变 run。
+- 系统失败恢复必须创建派生 run；禁止把失败 case 重置为 pending 或扩大既有 run 的冻结预算。
 - `completed`、`system_failed`、`invalid_output` 都属于固定分母；仍有 pending 时 run 不得关闭。
 - composition 审计缺失、出现未允许模型或与冻结集合不符时 fail closed。
 - `targets/` 是被 Git 忽略的本地运行输入；默认离线验证不依赖真实 allowlist 或 composition 文件。

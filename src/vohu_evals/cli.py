@@ -32,6 +32,7 @@ from vohu_evals.policy import (
     validate_official_composition_snapshot,
 )
 from vohu_evals.readiness import benchmark_readiness, validate_official_references
+from vohu_evals.recovery import build_recovery_evidence, plan_recovery
 from vohu_evals.reporting import build_evidence, build_report_evidence, verify_report
 from vohu_evals.rescoring import plan_rescore, rescore_run
 from vohu_evals.runner import EvaluationRunner, manifest_for
@@ -437,6 +438,7 @@ def _run_plan(
     trial_id: int,
     budget: Budget,
     max_concurrency: int,
+    retry_from: str | None,
     *,
     execute: bool,
     confirmed_budget: float | None,
@@ -452,12 +454,34 @@ def _run_plan(
                 "publication readiness failed: "
                 + "; ".join(f"{issue.code}: {issue.message}" for issue in issues)
             )
-    cases = benchmark.enumerate_cases(stage)
-    evaluator_requests = sum(benchmark.evaluator_requests_per_case(case) for case in cases)
-    planned_gateway_requests = len(cases) + evaluator_requests
+    all_cases = benchmark.enumerate_cases(stage)
     mode, gateway_model, gateway_protocol, expected_models, allowed_models = _profile_policy(
         root, profile_name
     )
+    recovery_plan = None
+    if retry_from is not None:
+        if Path(retry_from).name != retry_from:
+            raise ValueError("--retry-from must be a run ID, not a path")
+        source_path = root / "runs" / retry_from / "run.sqlite3"
+        if not source_path.is_file():
+            raise ValueError(f"source run ledger does not exist: {retry_from}")
+        source = SQLiteLedger(source_path)
+        try:
+            recovery_plan = plan_recovery(
+                source,
+                source_run_id=retry_from,
+                benchmark=benchmark_name,
+                profile=profile_name,
+                cases=all_cases,
+            )
+        finally:
+            source.close()
+        selected = set(recovery_plan.selected_case_ids)
+        cases = [case for case in all_cases if case.case_id in selected]
+    else:
+        cases = all_cases
+    evaluator_requests = sum(benchmark.evaluator_requests_per_case(case) for case in cases)
+    planned_gateway_requests = len(cases) + evaluator_requests
     seed = {
         "benchmark": benchmark_name,
         "profile": profile_name,
@@ -473,6 +497,8 @@ def _run_plan(
         "budget": budget.__dict__,
         "max_concurrency": max_concurrency,
     }
+    if recovery_plan is not None:
+        seed["derivation"] = recovery_plan.manifest_derivation
     run_id = f"{benchmark_name}-{profile_name}-{stage.value}-{canonical_hash(seed)[:12]}"
     plan = {
         "run_id": run_id,
@@ -497,6 +523,10 @@ def _run_plan(
         "max_concurrency": max_concurrency,
         "network_call": execute,
     }
+    if recovery_plan is not None:
+        plan["derivation"] = recovery_plan.manifest_derivation
+        plan["source_total_cases"] = recovery_plan.source_total_cases
+        plan["preserved_completed_cases"] = recovery_plan.preserved_completed_cases
     if not execute:
         print(json.dumps(plan, indent=2))
         return 0
@@ -528,6 +558,9 @@ def _run_plan(
     output = root / "runs" / run_id
     ledger = SQLiteLedger(output / "run.sqlite3")
     try:
+        manifest = manifest_for(spec, benchmark)
+        if recovery_plan is not None:
+            manifest["derivation"] = recovery_plan.manifest_derivation
         summary = EvaluationRunner(
             APIGOGatewayAdapter(base_url, api_key, model=gateway_model, protocol=gateway_protocol),
             ledger,
@@ -541,11 +574,36 @@ def _run_plan(
                 if benchmark.manifest.get("official_evaluator", {}).get("judge_model")
                 else None
             ),
-        ).execute(benchmark, spec, cases, manifest_for(spec, benchmark))
+        ).execute(benchmark, spec, cases, manifest)
         evidence = build_evidence(ledger, run_id, output / "evidence", benchmark)
+        combined_evidence = None
+        if recovery_plan is not None:
+            source = SQLiteLedger(root / "runs" / retry_from / "run.sqlite3")
+            try:
+                combined_evidence = build_recovery_evidence(
+                    source,
+                    ledger,
+                    benchmark,
+                    source_run_id=retry_from,
+                    recovery_run_id=run_id,
+                    selected_case_ids=recovery_plan.selected_case_ids,
+                    destination=output / "evidence" / "combined-summary.json",
+                )
+            finally:
+                source.close()
     finally:
         ledger.close()
-    print(json.dumps({**plan, **summary.__dict__, "evidence": str(evidence)}, indent=2))
+    print(
+        json.dumps(
+            {
+                **plan,
+                **summary.__dict__,
+                "evidence": str(evidence),
+                "combined_evidence": str(combined_evidence) if combined_evidence else None,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -681,6 +739,7 @@ def main() -> None:
     run.add_argument("--max-requests", type=int, required=True)
     run.add_argument("--max-wall-time-seconds", type=int, required=True)
     run.add_argument("--max-concurrency", type=int, default=1)
+    run.add_argument("--retry-from")
     run.add_argument("--execute", action="store_true")
     run.add_argument("--confirm-budget-usd", type=float)
     rescore = subparsers.add_parser("rescore-browsecomp")
@@ -800,6 +859,7 @@ def main() -> None:
                     max_wall_time_seconds=args.max_wall_time_seconds,
                 ),
                 args.max_concurrency,
+                args.retry_from,
                 execute=args.execute,
                 confirmed_budget=args.confirm_budget_usd,
             )

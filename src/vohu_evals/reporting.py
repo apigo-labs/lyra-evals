@@ -27,11 +27,13 @@ def build_evidence(
     manifest = ledger.run_manifest(run_id)
     derivation = manifest.get("derivation")
     is_rescore = isinstance(derivation, dict) and derivation.get("type") == "rescore"
+    is_recovery = isinstance(derivation, dict) and derivation.get("type") == "recovery"
     publishable = (
         manifest.get("stage") == "publication"
         and summary.completed_cases == summary.total_cases
         and summary.system_failed_cases == 0
         and summary.invalid_output_cases == 0
+        and not is_recovery
     )
     payload = {
         "schema_version": "1.0",
@@ -49,8 +51,9 @@ def build_evidence(
             "target_requests": 0 if is_rescore else summary.total_requests,
         },
     }
-    if is_rescore:
+    if isinstance(derivation, dict):
         payload["derivation"] = derivation
+    if is_rescore:
         payload["metrics"]["inherited_target_requests"] = summary.total_requests
         payload["metrics"]["inherited_target_cost_usd"] = round(summary.total_cost_usd, 6)
     if benchmark is not None:

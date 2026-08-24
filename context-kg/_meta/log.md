@@ -8,6 +8,12 @@ sources: 0
 
 # VOHU Evals Context-KG 变更日志
 
+## [2026-08-24] change | 不可变系统失败恢复
+
+- 新增来源 run 驱动的 recovery 选择，只重跑 `pending` 与 `system_failed` case。
+- 来源、选择策略、题数和选择集哈希进入派生 manifest；来源 ledger 不被修改。
+- Recovery 子集保持 internal-only，并生成按 case 合并的完整固定分母 evidence。
+
 ## [2026-08-24] change | 题目级并发与可恢复请求预算
 
 - Runner 支持冻结的题目级并发度，默认串行且不改变单题 VOHU 编排。

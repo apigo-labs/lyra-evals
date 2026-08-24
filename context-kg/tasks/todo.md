@@ -8,6 +8,22 @@ sources: 0
 
 # VOHU Evals 任务计划与 Review
 
+## Publication 系统失败恢复（2026-08-24）
+
+- [x] 聚合诊断 system_failed、retry_count 与原子请求预留
+- [x] 证明来源 run 已恰好耗尽冻结请求额度且不能原地续跑
+- [x] 为 pending/system_failed 选择集和 combined evidence 增加红测
+- [x] 实现 `--retry-from` 不可变派生 recovery run
+- [x] 冻结来源、选择策略、case 数量和选择集哈希
+- [ ] 完成全仓验证、提交推送并串行重跑 recovery case
+- [ ] 生成来源加 recovery 的完整固定分母汇总
+
+### Review
+
+- 来源 ledger 保持只读；Recovery 只包含来源中的 `pending` 与 `system_failed`，已成功 case 不重复请求。
+- Recovery 子集 evidence 永远不能单独发布；combined evidence 按 case ID 替换来源失败结果，并合并实际请求与成本。
+- 真实恢复运行使用独立 run ID 和足以覆盖每题三次 attempt 的请求额度，避免再次因旧 run 预算耗尽而停机。
+
 ## 题目级并发与可恢复请求预算（2026-08-24）
 
 - [x] 冻结题目级并发边界，不改变单题 VOHU 内部编排
