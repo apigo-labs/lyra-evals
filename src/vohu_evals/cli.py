@@ -436,10 +436,13 @@ def _run_plan(
     stage: RunStage,
     trial_id: int,
     budget: Budget,
+    max_concurrency: int,
     *,
     execute: bool,
     confirmed_budget: float | None,
 ) -> int:
+    if not 1 <= max_concurrency <= 32:
+        raise ValueError("--max-concurrency must be between 1 and 32")
     root = _root()
     benchmark = load_benchmark(root, benchmark_name)
     if stage is RunStage.PUBLICATION:
@@ -468,6 +471,7 @@ def _run_plan(
             "backoff_seconds": DEFAULT_RETRY_BACKOFF_SECONDS,
         },
         "budget": budget.__dict__,
+        "max_concurrency": max_concurrency,
     }
     run_id = f"{benchmark_name}-{profile_name}-{stage.value}-{canonical_hash(seed)[:12]}"
     plan = {
@@ -490,6 +494,7 @@ def _run_plan(
             "backoff_seconds": DEFAULT_RETRY_BACKOFF_SECONDS,
         },
         "budget": budget.__dict__,
+        "max_concurrency": max_concurrency,
         "network_call": execute,
     }
     if not execute:
@@ -518,6 +523,7 @@ def _run_plan(
         gateway_protocol=gateway_protocol,
         expected_models=expected_models,
         expected_models_match=_expected_models_match(mode),
+        max_concurrency=max_concurrency,
     )
     output = root / "runs" / run_id
     ledger = SQLiteLedger(output / "run.sqlite3")
@@ -674,6 +680,7 @@ def main() -> None:
     run.add_argument("--max-usd", type=float, required=True)
     run.add_argument("--max-requests", type=int, required=True)
     run.add_argument("--max-wall-time-seconds", type=int, required=True)
+    run.add_argument("--max-concurrency", type=int, default=1)
     run.add_argument("--execute", action="store_true")
     run.add_argument("--confirm-budget-usd", type=float)
     rescore = subparsers.add_parser("rescore-browsecomp")
@@ -792,6 +799,7 @@ def main() -> None:
                     max_requests=args.max_requests,
                     max_wall_time_seconds=args.max_wall_time_seconds,
                 ),
+                args.max_concurrency,
                 execute=args.execute,
                 confirmed_budget=args.confirm_budget_usd,
             )

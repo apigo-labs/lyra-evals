@@ -2,7 +2,7 @@
 title: VOHU Evals 运行架构
 tags: [architecture, evaluation, vohu]
 links: [benchmark-integration, scoring-evidence, vohu-evals-test-strategy]
-updated: 2026-08-15
+updated: 2026-08-24
 sources: 7
 ---
 
@@ -23,10 +23,16 @@ VOHU 模型标识；外部模型不进入目标调用链。
 6. Runner 统一执行预算、动态超时、瞬时失败重试、固定分母、评分和断点续跑。
 7. SQLite ledger 保存不可变 run manifest 和每个 case 的终态，再由 reporting 生成 evidence。
 
+题目级并发由 Runner 的冻结参数 `max_concurrency` 控制，默认值为 1，上限为 32。Runner 只并发独立 case，
+不介入单题内部的 VOHU 编排。每次目标调用前，ledger 在事务中原子预留 attempt 和全局请求额度；因此并发
+worker 不会突破请求上限，进程崩溃后也不会把已发出但尚未落终态的请求当作未消耗额度。Benchmark 的响应
+解析和评分保持串行，避免第三方 evaluator 的进程级状态在多线程之间相互污染。
+
 ## 核心不变量
 
 - 默认命令和测试不发起真实模型调用；执行与预算必须双重显式确认。
 - run manifest 一经写入不可改变；相同 run 标识只能恢复，不能换配置覆盖。
+- 并发度进入 run manifest 和 run 标识；改变并发度必须产生新的不可变 run。
 - `completed`、`system_failed`、`invalid_output` 都属于固定分母；仍有 pending 时 run 不得关闭。
 - composition 审计缺失、出现未允许模型或与冻结集合不符时 fail closed。
 - `targets/` 是被 Git 忽略的本地运行输入；默认离线验证不依赖真实 allowlist 或 composition 文件。

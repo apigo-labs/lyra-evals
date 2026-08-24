@@ -8,6 +8,23 @@ sources: 0
 
 # VOHU Evals 任务计划与 Review
 
+## 题目级并发与可恢复请求预算（2026-08-24）
+
+- [x] 冻结题目级并发边界，不改变单题 VOHU 内部编排
+- [x] 为并发峰值、全局请求上限和崩溃续跑增加确定性测试
+- [x] 在 SQLite 中事务化预留 attempt 和请求额度
+- [x] 增加 `--max-concurrency`，并纳入不可变 run 标识和 manifest
+- [x] 运行完整测试、格式、Context-KG 和敏感信息校验
+
+### Review
+
+- 默认并发度仍为 1；调用方可显式设置 1 到 32。Runner 仅同时处理不同题目，单题的 Router、Expert、
+  Finalizer 关系继续完全由 VOHU Engine 决定。
+- 请求在访问 Gateway 前即持久化预留；多个 worker 通过 SQLite 事务共享同一个 `max_requests` 上限，
+  中断后恢复时不会重复使用已预留 attempt。
+- 解析和评分在进程内串行执行；网络调用与 Platform audit 可并发，以降低墙钟时间且不改变赛道评分语义。
+- 并发度属于冻结运行参数；修改它会生成不同 run ID，既有 ledger 不会被新参数覆盖。
+
 ## IFEval Auto 实测（2026-08-23）
 
 - [x] 核对 OrbStack 运行镜像与 Platform 实时 Auto 投影

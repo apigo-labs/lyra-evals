@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,8 @@ class SQLiteLedger:
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path)
+        self._lock = threading.RLock()
+        self.connection = sqlite3.connect(path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(
             """
@@ -46,6 +48,13 @@ class SQLiteLedger:
               error TEXT,
               retry_count INTEGER NOT NULL DEFAULT 0,
               PRIMARY KEY (run_id, case_id)
+            );
+            CREATE TABLE IF NOT EXISTS request_attempts (
+              run_id TEXT NOT NULL,
+              case_id TEXT NOT NULL,
+              attempt_no INTEGER NOT NULL,
+              reserved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (run_id, case_id, attempt_no)
             );
             """
         )
@@ -94,11 +103,45 @@ class SQLiteLedger:
         self.connection.commit()
 
     def pending_case_ids(self, run_id: str) -> tuple[str, ...]:
-        rows = self.connection.execute(
-            "SELECT case_id FROM cases WHERE run_id = ? AND status = ? ORDER BY case_id",
-            (run_id, CaseStatus.PENDING),
-        ).fetchall()
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT case_id FROM cases WHERE run_id = ? AND status = ? ORDER BY case_id",
+                (run_id, CaseStatus.PENDING),
+            ).fetchall()
         return tuple(row["case_id"] for row in rows)
+
+    def reserve_attempt(self, run_id: str, case_id: str, max_requests: int) -> int | None:
+        """Durably reserve one target request before it leaves the process."""
+        with self._lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                total = self._request_count_locked(run_id)
+                if total >= max_requests:
+                    self.connection.rollback()
+                    return None
+                row = self.connection.execute(
+                    "SELECT COUNT(*) AS value FROM request_attempts "
+                    "WHERE run_id = ? AND case_id = ?",
+                    (run_id, case_id),
+                ).fetchone()
+                attempt_no = int(row["value"] or 0)
+                self.connection.execute(
+                    "INSERT INTO request_attempts(run_id, case_id, attempt_no) VALUES (?, ?, ?)",
+                    (run_id, case_id, attempt_no),
+                )
+                self.connection.commit()
+                return attempt_no
+            except Exception:
+                self.connection.rollback()
+                raise
+
+    def reserved_attempt_count(self, run_id: str, case_id: str) -> int:
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT COUNT(*) AS value FROM request_attempts WHERE run_id = ? AND case_id = ?",
+                (run_id, case_id),
+            ).fetchone()
+        return int(row["value"] or 0)
 
     def mark_completed_if_settled(self, run_id: str) -> bool:
         """Close a run only when every frozen case has reached a terminal state."""
@@ -137,35 +180,36 @@ class SQLiteLedger:
         score: CaseScore,
         retry_count: int,
     ) -> None:
-        self.connection.execute(
-            """
+        with self._lock:
+            self.connection.execute(
+                """
             UPDATE cases SET status = ?, score = ?, correct = ?, metric = ?,
               score_details_json = ?, response_json = ?, request_id = ?, execution_id = ?,
               response_model = ?, attempt_models_json = ?, attempts_json = ?, usage_json = ?,
               cost_usd = ?, latency_ms = ?, retry_count = ?
             WHERE run_id = ? AND case_id = ?
-            """,
-            (
-                CaseStatus.COMPLETED,
-                score.value,
-                int(score.correct),
-                score.metric,
-                json.dumps(score.details, ensure_ascii=False, sort_keys=True),
-                json.dumps(result.raw_response, ensure_ascii=False, sort_keys=True),
-                result.request_id,
-                result.execution_id,
-                result.response_model,
-                json.dumps(result.attempt_models),
-                json.dumps(result.attempts, ensure_ascii=False, sort_keys=True),
-                json.dumps(result.usage, sort_keys=True),
-                result.cost_usd,
-                result.latency_ms,
-                retry_count,
-                run_id,
-                case_id,
-            ),
-        )
-        self.connection.commit()
+                """,
+                (
+                    CaseStatus.COMPLETED,
+                    score.value,
+                    int(score.correct),
+                    score.metric,
+                    json.dumps(score.details, ensure_ascii=False, sort_keys=True),
+                    json.dumps(result.raw_response, ensure_ascii=False, sort_keys=True),
+                    result.request_id,
+                    result.execution_id,
+                    result.response_model,
+                    json.dumps(result.attempt_models),
+                    json.dumps(result.attempts, ensure_ascii=False, sort_keys=True),
+                    json.dumps(result.usage, sort_keys=True),
+                    result.cost_usd,
+                    result.latency_ms,
+                    retry_count,
+                    run_id,
+                    case_id,
+                ),
+            )
+            self.connection.commit()
 
     def fail(
         self,
@@ -177,53 +221,55 @@ class SQLiteLedger:
         *,
         result: InvocationResult | None = None,
     ) -> None:
-        if result is None:
-            self.connection.execute(
-                """
+        with self._lock:
+            if result is None:
+                self.connection.execute(
+                    """
                 UPDATE cases SET status = ?, error = ?, retry_count = ?
                 WHERE run_id = ? AND case_id = ?
-                """,
-                (status, error[:1024], retry_count, run_id, case_id),
-            )
-        else:
-            self.connection.execute(
-                """
+                    """,
+                    (status, error[:1024], retry_count, run_id, case_id),
+                )
+            else:
+                self.connection.execute(
+                    """
                 UPDATE cases SET status = ?, error = ?, retry_count = ?, response_json = ?,
                   request_id = ?, execution_id = ?, response_model = ?, usage_json = ?,
                   cost_usd = ?, latency_ms = ?
                 WHERE run_id = ? AND case_id = ?
-                """,
-                (
-                    status,
-                    error[:1024],
-                    retry_count,
-                    json.dumps(result.raw_response, ensure_ascii=False, sort_keys=True),
-                    result.request_id,
-                    result.execution_id,
-                    result.response_model,
-                    json.dumps(result.usage, sort_keys=True),
-                    result.cost_usd,
-                    result.latency_ms,
-                    run_id,
-                    case_id,
-                ),
-            )
-        self.connection.commit()
+                    """,
+                    (
+                        status,
+                        error[:1024],
+                        retry_count,
+                        json.dumps(result.raw_response, ensure_ascii=False, sort_keys=True),
+                        result.request_id,
+                        result.execution_id,
+                        result.response_model,
+                        json.dumps(result.usage, sort_keys=True),
+                        result.cost_usd,
+                        result.latency_ms,
+                        run_id,
+                        case_id,
+                    ),
+                )
+            self.connection.commit()
 
     def summary(self, run_id: str) -> RunSummary:
-        row = self.connection.execute(
-            """
+        with self._lock:
+            row = self.connection.execute(
+                """
             SELECT COUNT(*) AS total,
               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
               SUM(CASE WHEN correct = 1 THEN 1 ELSE 0 END) AS correct,
               SUM(CASE WHEN status = 'system_failed' THEN 1 ELSE 0 END) AS system_failed,
               SUM(CASE WHEN status = 'invalid_output' THEN 1 ELSE 0 END) AS invalid_output,
-              SUM(CASE WHEN status = 'pending' THEN 0 ELSE retry_count + 1 END) AS requests,
               SUM(cost_usd) AS cost
             FROM cases WHERE run_id = ?
             """,
-            (run_id,),
-        ).fetchone()
+                (run_id,),
+            ).fetchone()
+            requests = self._request_count_locked(run_id)
         return RunSummary(
             run_id=run_id,
             total_cases=int(row["total"] or 0),
@@ -231,15 +277,34 @@ class SQLiteLedger:
             correct_cases=int(row["correct"] or 0),
             system_failed_cases=int(row["system_failed"] or 0),
             invalid_output_cases=int(row["invalid_output"] or 0),
-            total_requests=int(row["requests"] or 0),
+            total_requests=requests,
             total_cost_usd=float(row["cost"] or 0.0),
         )
 
     def case_rows(self, run_id: str) -> list[dict[str, Any]]:
-        rows = self.connection.execute(
-            "SELECT * FROM cases WHERE run_id = ? ORDER BY case_id", (run_id,)
-        ).fetchall()
+        with self._lock:
+            rows = self.connection.execute(
+                "SELECT * FROM cases WHERE run_id = ? ORDER BY case_id", (run_id,)
+            ).fetchall()
         return [dict(row) for row in rows]
 
+    def _request_count_locked(self, run_id: str) -> int:
+        row = self.connection.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM request_attempts WHERE run_id = ?) +
+              COALESCE(SUM(
+                CASE WHEN c.status <> ? AND NOT EXISTS (
+                  SELECT 1 FROM request_attempts a
+                  WHERE a.run_id = c.run_id AND a.case_id = c.case_id
+                ) THEN c.retry_count + 1 ELSE 0 END
+              ), 0) AS value
+            FROM cases c WHERE c.run_id = ?
+            """,
+            (run_id, CaseStatus.PENDING, run_id),
+        ).fetchone()
+        return int(row["value"] or 0)
+
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            self.connection.close()

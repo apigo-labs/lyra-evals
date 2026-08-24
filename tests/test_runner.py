@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -51,6 +53,105 @@ def test_runner_executes_and_resumes_without_duplicate_calls(tmp_path: Path) -> 
         assert gateway.calls == 2
     finally:
         ledger.close()
+
+
+class ConcurrencyTrackingGateway:
+    def __init__(self, delegate: FixtureGatewayAdapter) -> None:
+        self.delegate = delegate
+        self.active = 0
+        self.max_active = 0
+        self.lock = threading.Lock()
+
+    def invoke(self, request):
+        with self.lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            time.sleep(0.05)
+            return self.delegate.invoke(request)
+        finally:
+            with self.lock:
+                self.active -= 1
+
+
+def test_runner_executes_cases_with_bounded_concurrency(tmp_path: Path) -> None:
+    benchmark = load_benchmark(ROOT, "gpqa")
+    cases = benchmark.enumerate_cases(RunStage.FIXTURE)
+    delegate = FixtureGatewayAdapter(
+        {case.case_id: case.fixture_response for case in cases}  # type: ignore[dict-item]
+    )
+    gateway = ConcurrencyTrackingGateway(delegate)
+    ledger = SQLiteLedger(tmp_path / "run.sqlite3")
+    base = _spec("concurrent-run")
+    spec = RunSpec(**{**base.__dict__, "max_concurrency": 2})
+    try:
+        summary = EvaluationRunner(gateway, ledger).execute(
+            benchmark, spec, cases, manifest_for(spec, benchmark)
+        )
+    finally:
+        ledger.close()
+
+    assert summary.correct_cases == 2
+    assert summary.total_requests == 2
+    assert gateway.max_active == 2
+
+
+def test_runner_persists_attempt_reservation_across_resume(tmp_path: Path) -> None:
+    benchmark = load_benchmark(ROOT, "gpqa")
+    cases = benchmark.enumerate_cases(RunStage.FIXTURE)
+    spec = _spec("interrupted-attempt")
+    path = tmp_path / "run.sqlite3"
+    ledger = SQLiteLedger(path)
+    ledger.initialize(spec, manifest_for(spec, benchmark), cases)
+    assert ledger.reserve_attempt(spec.run_id, cases[0].case_id, spec.budget.max_requests) == 0
+    ledger.close()
+
+    gateway = FixtureGatewayAdapter(
+        {case.case_id: case.fixture_response for case in cases}  # type: ignore[dict-item]
+    )
+    resumed = SQLiteLedger(path)
+    try:
+        summary = EvaluationRunner(gateway, resumed).execute(
+            benchmark, spec, cases, manifest_for(spec, benchmark)
+        )
+        rows = resumed.case_rows(spec.run_id)
+    finally:
+        resumed.close()
+
+    assert summary.correct_cases == 2
+    assert summary.total_requests == 3
+    assert gateway.calls == 2
+    assert rows[0]["retry_count"] == 1
+
+
+def test_concurrent_runner_never_exceeds_request_budget(tmp_path: Path) -> None:
+    benchmark = load_benchmark(ROOT, "gpqa")
+    cases = benchmark.enumerate_cases(RunStage.FIXTURE)
+    delegate = FixtureGatewayAdapter(
+        {case.case_id: case.fixture_response for case in cases}  # type: ignore[dict-item]
+    )
+    gateway = ConcurrencyTrackingGateway(delegate)
+    ledger = SQLiteLedger(tmp_path / "run.sqlite3")
+    base = _spec("concurrent-budget")
+    spec = RunSpec(
+        **{
+            **base.__dict__,
+            "budget": Budget(1, 1, 60),
+            "max_concurrency": 2,
+        }
+    )
+    try:
+        with pytest.raises(BudgetExceededError):
+            EvaluationRunner(gateway, ledger).execute(
+                benchmark, spec, cases, manifest_for(spec, benchmark)
+            )
+        summary = ledger.summary(spec.run_id)
+    finally:
+        ledger.close()
+
+    assert delegate.calls == 1
+    assert summary.total_requests == 1
+    assert summary.completed_cases == 1
 
 
 def test_runner_keeps_run_running_when_budget_leaves_pending_cases(tmp_path: Path) -> None:
