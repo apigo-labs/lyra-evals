@@ -8,6 +8,20 @@ sources: 0
 
 # VOHU Evals 任务计划与 Review
 
+## 提交并推送当前改动（2026-09-07）
+
+- [x] 检查当前分支、远端和工作区状态
+- [x] 审阅全部待提交差异，确认无敏感或越界内容
+- [x] 运行 `make verify`
+- [x] 提交全部改动并推送到 `origin/main`
+- [x] 核验远端同步状态并补充 Review
+
+### Review
+
+- 本次功能差异仅更新 Judge 测试使用的本地 Gateway 主机名，不涉及生产配置、真实 target、凭据或运行产物。
+- `make verify` 已通过：112 个测试、Ruff、Context-KG 校验、敏感信息扫描和 diff 检查均成功。
+- 全部工作区改动统一提交到 `main` 并推送至 `origin/main`，推送后核对本地与上游引用一致且工作区干净。
+
 ## Publication 系统失败恢复（2026-08-24）
 
 - [x] 聚合诊断 system_failed、retry_count 与原子请求预留

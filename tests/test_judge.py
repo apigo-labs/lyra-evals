@@ -24,7 +24,7 @@ def test_judge_uses_official_gateway_chat_body_with_protocol_options() -> None:
         )
 
     judge = APIGOJudgeAdapter(
-        "http://gateway.localhost",
+        "http://ai-gateway.localhost",
         "secret",
         "gemini-3.1-pro-preview",
         transport=httpx.MockTransport(handler),
