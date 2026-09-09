@@ -54,6 +54,11 @@ LLM judge 和多次判分等差异必须进入各自协议版本与 evidence。
 
 ## 相关页面
 
+- [[benchmark-onboarding-checklist]]
 - [[vohu-evals-architecture]]
 - [[scoring-evidence]]
 - [[vohu-evals-test-strategy]]
+
+## 交互赛道运行边界
+
+τ² 的工具传输与模拟器/Judge 分离；参考模型、预算、运行镜像和工具桥进入冻结证据。SWE 的题库字段必须匹配固定 evaluator，实例环境在模型调用前准备。工作区保留官方编译产物，Agent 工具环境与隐藏评分容器分离，评分容器禁止联网。基础设施错误标记为 system_failed，不产生正式准确率。实际账单只接受匹配请求 ID、模型和已结算标志的精确金额；估算与预留不能替代实际账单。

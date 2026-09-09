@@ -21,6 +21,15 @@ dependencies = [
 [project.scripts]
 vohu-eval = "vohu_evals.cli:main"
 
+[project.optional-dependencies]
+console = [
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+]
+benchmarks = [
+    "pyarrow>=19,<25",
+]
+
 [dependency-groups]
 dev = [
   "pytest>=8.4,<9",
@@ -44,5 +53,7 @@ extend-exclude = ["src/instruction_following_eval"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
+"src/vohu_evals/suites/registry.py" = ["RUF001"]
+"src/vohu_evals/console/*.py" = ["RUF001"] # Chinese console copy uses Chinese punctuation.
 "benchmarks/browsecomp/plugin.py" = ["E501"] # Frozen upstream evaluator prompt.
 "benchmarks/draco/plugin.py" = ["E501", "RUF001"] # Frozen upstream agent/judge prompts.

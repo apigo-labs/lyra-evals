@@ -1,4 +1,25 @@
-# VOHU Evals
+# Lyra Evals
+
+## 本地 Console
+
+新工作台用于配置 APIGO 模型、管理评测计划、观察 Docker/ACP 并行执行。完整设计见
+[本地 Console 与执行设计](context-kg/technical/adr/local-console-execution-design.md)。
+
+```bash
+make console-install
+make console-smoke-image
+make console
+```
+
+打开 `http://127.0.0.1:8768`。开发前端可另运行 `make console-dev`，使用 `127.0.0.1:5178`。
+`make console-acp-image` 构建冻结的 Claude Agent ACP 镜像。
+
+当前可运行真实 Docker 中的合成 ACP 自检，支持评测集内并发、跨评测集并发和取消；自检不调用模型，
+不是五个 benchmark 的正式成绩。正式运行在官方任务适配、Gateway 唯一出口与预算对账完成前会明确拒绝。
+模型配置保存于 `.local/console/`；API Key 是权限为 0600 的本地文件，不回显、不写入浏览器持久化存储，
+目前不是加密密钥库。不要将本地控制器暴露到公网。
+
+## 既有 VOHU CLI
 
 VOHU 专用、可复现的评测与对外报告流水线。正式被测请求只通过 APIGO Gateway 的 OpenAI Chat Completions
 协议调用 VOHU 模型；内部 composition 仅允许 DeepSeek、GLM、Kimi、Qwen 等中国模型。Claude、GPT、Gemini
@@ -73,3 +94,35 @@ BrowseComp 当前冻结 `vohu-research-v2`：`glm-5.2` 搜索候选与 `kimi-k3`
 - `reports/`：人工批准后可提交的报告。
 - `publications/`：显式 Website 发布包。
 - `context-kg/`：项目知识库。
+
+### 模型与 effort 计划
+
+Console 的「新建评测 → 真实模型评测」可按连接选择 Harness 与多个 effort，配置预算策略、输出上限、时限和 seed；「生成并保存计划」只执行离线校验。
+`GET /api/capabilities` 返回未验证候选；`POST /api/plans` 展开去重矩阵；`GET /api/plans` 和 `GET /api/plans/{id}` 读取冻结计划。
+计划支持 JSON 导出。API 不回传凭据，修改配置产生新 hash。未知价格不填零，未通过数据、网络与计费门禁的计划不能执行。
+GPT 配置使用 Codex/Responses；Claude 使用 Claude Agent/Messages。候选 effort 不等于模型已支持。
+独立预算账本已具备原子预留与幂等结算，但尚未连接真实 Gateway 收费；Codex 的正式任务执行和结果曲线仍待接入。
+
+### 五个评测集的数据与评分入口
+
+`make benchmark-runtimes` 安装固定源码版本的 τ²/SWE 官方依赖到独立环境；`make benchmark-prepare` 准备五项数据；`make benchmark-lcb-image` 构建断网 LCB 官方评分镜像。
+数据保存在 `.local/suites`，包含不可变 SHA-256、来源版本和去重 case IDs；新计划冻结具体抽样 IDs。GPQA 默认使用作者公开发布包，也支持 `--gpqa-csv` 导入授权文件。LCB 原始文件逐行处理，隐藏测试独立保存，并核对官方文件 SHA-256。
+
+| 评测集 | 当前数据范围 | 代码入口 | 正式执行剩余项 |
+|---|---|---|---|
+| IFEval | 官方 541 题 | 原官方 strict/loose scorer，保存答案评分 CLI | ACP 调度与计费 |
+| GPQA | Diamond 198 题 | CSV 导入、固定 shuffle、严格最终选项解析 | ACP 调度与计费；本地提示为派生闭卷协议 |
+| LiveCodeBench | release_v6 lite，1055 题 | 官方测试执行器、独立断网 Docker grader | ACP 调度与计费 |
+| τ²-bench | retail/airline/telecom base，278 题 | 官方 Gym 会话适配，隐藏状态隔离 | ACP 工具传输、用户模拟器/Judge Gateway 计费 |
+| SWE-bench | Verified 500 题 | patch predictions、官方 Docker evaluator、结果解析 | 实例镜像验收、编码 Agent 调度与计费 |
+
+Console 读取实际本地数据状态；上述接口接入不意味着已完成五项端到端付费测评。`scripts/score_benchmark.py` 支持保存答案的离线评分或 SWE 官方执行入口；`scripts/verify_benchmark_runtime.py` 是显式运行的无模型验收。默认 `make verify` 不读取真实题库、不启动 Docker、不调用模型。
+
+
+### 结果总览与真实小样本验收
+
+Console「结果与导出」集中查看成本、单题耗时、准确率、Harness 与 effort；支持作业 CSV/JSON 和逐题 CSV。未知费用为空，公开价格上界估算与实扣账单分列；自检不作为模型成绩。点击作业进度查看逐题证据。
+
+构建 `make console-gateway-image` 后，可在冻结计划中授权预算并运行 IFEval、GPQA、LiveCodeBench。控制器要求所有单题预算之和不超过实验授权，冻结官方数据/镜像/价格上界，并通过每题专属转发器只访问 APIGO。τ² 和 SWE 的完整 Agent 交互仍未开放；最终账单自动对账尚未接通。
+
+离线出口策略测试：`node --test deploy/console/gateway/policy.test.mjs`。普通测试不产生模型调用。

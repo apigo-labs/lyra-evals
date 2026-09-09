@@ -1,0 +1,6 @@
+{
+  "name": "lyra-codex-acp-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {"@agentclientprotocol/codex-acp": "1.2.0"}
+}

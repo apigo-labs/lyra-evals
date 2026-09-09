@@ -63,6 +63,7 @@ worker 不会突破请求上限，进程崩溃后也不会把已发出但尚未�
 
 ## 相关页面
 
+- [[fusion-router-evaluation-design]] — 新目标的设计提案，尚未替代本文的已实现架构。
 - [[benchmark-integration]]
 - [[scoring-evidence]]
 - [[vohu-evals-test-strategy]]

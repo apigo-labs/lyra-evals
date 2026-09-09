@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from vohu_evals.benchmark import Benchmark
 from vohu_evals.models import Case, CaseScore, InvocationResult
+from vohu_evals.suites.packs import gpqa_score
 
 
 class Plugin(Benchmark):
     def score_case(self, case: Case, parsed_output: str, result: InvocationResult) -> CaseScore:
-        answer = parsed_output.strip().upper().rstrip(".")[-1:]
-        expected = str(case.expected).upper()
+        score = gpqa_score(parsed_output, str(case.expected).upper())
         return CaseScore(
-            value=float(answer == expected),
-            correct=answer == expected,
+            value=score["value"],
+            correct=score["correct"],
             metric="accuracy",
-            details={"parsed_answer": answer},
+            details={"parsed_answer": score["parsed_answer"]},
         )

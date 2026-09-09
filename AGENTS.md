@@ -2,8 +2,10 @@
 
 ## 项目定位
 
-`vohu-evals` 只评测经 APIGO Gateway 调用的 `apigo/vohu`。不得把它扩展为通用模型 runner，也不得绕过
-Gateway 直连模型厂商。
+`lyra-evals` 经 APIGO Gateway 比较 Fusion 与单模型，GPT 系列执行 Agent 采用冻结版本的 Codex ACP，Claude 系列采用冻结版本的 Claude Agent ACP；其他模型/Fusion 按已验证能力选择，不静默回退。
+模型、Harness、effort、工具 profile 与预算共同定义不可变实验变体；跨 Harness 结果不得归因为纯模型差异。
+不得绕过 Gateway 直连模型厂商。当前目标为 IFEval、GPQA、LiveCodeBench、τ²-bench、SWE-bench。
+旧 VOHU composition 的约束只适用于旧 profile，不限制独立单模型目标。
 
 ## 强制边界
 
