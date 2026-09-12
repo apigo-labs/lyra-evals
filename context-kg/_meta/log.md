@@ -8,6 +8,12 @@ sources: 0
 
 # VOHU Evals Context-KG 变更日志
 
+## [2026-09-12] run | 直连剖面校准跑完成
+
+- 7 变体 × IFEval/GPQA/LCB × 10 题冻结校准集经 Inspect 直连剖面全部执行；无输出截断。
+- 全部错误来自同一原因：请求超过 OpenAI SDK 默认 600 秒超时后连接断开；主测试须显式设置与设计一致的 `--timeout`，超时记失败。
+- Platform 账单以模型 + 运行时间窗归集可行；Lyra 路由为独立账单行，逐题精确配对需要 Gateway 请求 id。
+
 ## [2026-09-12] change | LiveCodeBench 直连剖面的 Inspect 薄包装
 
 - 新增 `inspect_tasks/livecodebench_v6.py`：读冻结题库建数据集、任务 metadata 记录 pack 摘要，单轮生成、无工具无重试。
