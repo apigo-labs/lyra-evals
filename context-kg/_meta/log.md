@@ -8,6 +8,17 @@ sources: 0
 
 # VOHU Evals Context-KG 变更日志
 
+## [2026-09-12] change | 直连剖面的成本 / 耗时 / 准确率对比报告
+
+- 新增 `scripts/inspect_report.py` 与 `make inspect-report`：一条命令从一个运行集的 Inspect 日志生成
+  `report.json` / `report.csv` / `samples.csv` 和自包含 `report.html`（内联样式与手绘 SVG，离线可开）。
+- 运行时间窗由 `inspect log dump --header-only` 就地提取；成本按「模型 + 运行时间窗」归集，Fusion 路由是
+  独立账单行，逐题成本只能按请求时长近似匹配，匹配不上留空而非 0。
+- 新增 `scripts/platform_logs_export.py` 与 `make platform-logs-export`，复用既有平台凭据管理器只读拉取账单，
+  导出只保留计费相关字段。
+- 报告口径：准确率分母为计划题数（错误题留在分母内）并给 Wilson 95% 区间；固定模型附公开价估算用于对照，
+  Fusion 无公开价；校准样本量下所有对比只作描述。
+
 ## [2026-09-12] run | 直连剖面校准跑完成
 
 - 7 变体 × IFEval/GPQA/LCB × 10 题冻结校准集经 Inspect 直连剖面全部执行；无输出截断。

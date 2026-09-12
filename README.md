@@ -153,3 +153,23 @@ grader，单轮生成、无工具、无重试。运行前需 `make benchmark-lcb
 `PYTHONPATH=src:.`，不把本项目装进独立环境，避免 `instruction_following_eval` 同名包遮蔽 IFEval 评分器所需的分支。
 
 - `scripts/freeze_inspect_samples.py` 按 `.local/designs/fusion-roadshow-evaluation.md` 第 3 节固定 seed 20260909，从冻结 pack（IFEval/GPQA Diamond/LiveCodeBench release_v6）分层抽取互斥的校准集与主测试集，官方 id 对齐 `--sample-id`（IFEval 用 `key`，GPQA 用 CSV `Record ID`，LCB 用 pack case id），排除 `.local/console/console.sqlite3` 与 `.local/inspect-logs/*.eval` 中已用过的题目，输出到 `.local/inspect-samples/`（默认拒绝覆盖已冻结结果，需 `--force`）。
+
+#### 成本 / 耗时 / 准确率对比报告
+
+```bash
+make platform-logs-export                     # 刷新平台账单导出（只读，凭据来自 .env）
+make inspect-report                           # 生成对比报告
+make inspect-report LOGS=.local/inspect-logs/main PLATFORM=.local/platform-logs.json OUT=.local/inspect-report-main
+```
+
+`scripts/inspect_report.py` 读取一个运行集的 `.eval` 日志，逐题行复用 `scripts/inspect_summary.py`，运行窗口由
+`inspect log dump --header-only` 就地提取（不再需要手工生成 runs.jsonl），输出到 `OUT`：`report.json`、`report.csv`
+（每个「赛道 × 变体」一行，含准确率与 Wilson 95% 区间、结算成本、每题与每答对成本、p50/p95/均值耗时、逐题 token、
+Lyra 路由分布）、`samples.csv`（逐题行 + 按时长近似匹配的逐题成本）和自包含的 `report.html`（内联样式、Python 手绘
+SVG，离线可开）。
+
+成本口径：Platform 把每个 Gateway 请求记为独立账单行，`apigo/lyra-*` 路由本身就是一条账单行并已含其内部调用，
+不需要再求和；Inspect 日志里没有 Gateway 请求 id，因此按「模型 + 运行时间窗」归集——模型等于该变体、时间落在
+[run started, run completed + 5 秒] 的账单行计入该 run，其他模型（含被路由到的子模型）一律排除。逐题成本只能按
+请求时长近似匹配，匹配不上的留空，不写 0；缺少账单导出时所有成本列同样留空。准确率分母是计划题数，错误题留在
+分母内。固定模型额外给出按公开价（`.local/acceptance/ifeval-prices.json`）的估算值以便对照，Lyra 无公开价。

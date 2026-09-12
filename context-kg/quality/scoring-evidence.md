@@ -2,7 +2,7 @@
 title: VOHU Evals 评分与证据
 tags: [quality, scoring, evidence]
 links: [vohu-evals-architecture, benchmark-integration, vohu-evals-test-strategy]
-updated: 2026-08-15
+updated: 2026-09-12
 sources: 6
 ---
 
@@ -31,6 +31,15 @@ SQLite ledger 是本地运行事实源，保存不可变 manifest、case 状态�
 - Publication 只在 publication 阶段、固定分母完全终态且没有系统失败或无效输出时开放。
 - Report verifier 要求每个数字或比较声明能映射到 evidence；Codex 只负责文字组织，不负责重算。
 - 外部参考若存在，必须独立标记可比性，不能改变 VOHU 原始指标或发布门禁。
+
+## 直连剖面的成本归集
+
+直连 API 剖面没有 Runner 账本，成本来自 Platform 的请求日志：每个 Gateway 请求是一条独立账单行，Fusion 路由
+`apigo/lyra-*` 本身也是一条账单行且已包含其内部子调用，不需要再对子模型求和。Inspect 日志不记录 Gateway 请求 id，
+因此按「模型 + 运行时间窗」归集：模型等于该变体、时间落在该 run 起止（终点留数秒尾窗）之间的账单行归入该 run，
+其他模型的账单行——包括被路由到的子模型——一律排除。逐题精确成本不可得，只能按请求时长近似匹配，匹配不上的留空；
+缺账单导出时成本列留空而不是 0。准确率分母仍是计划题数，错误题留在分母内。固定模型另给公开价估算值用于对照，
+Fusion 没有公开价。
 
 ## 证据
 

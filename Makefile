@@ -80,3 +80,17 @@ inspect-summary:
 # Stage-4 calibration (7 variants x 3 benchmarks x 10 frozen samples) via Inspect; SET=main for the main sets.
 calibration:
 	scripts/run_calibration.sh
+
+.PHONY: inspect-report platform-logs-export
+# Standalone cost / latency / accuracy comparison report from one Inspect run set.
+#   make inspect-report LOGS=.local/inspect-logs/calibration PLATFORM=.local/platform-logs-today.json OUT=.local/inspect-report
+LOGS ?= .local/inspect-logs/calibration
+PLATFORM ?= .local/platform-logs-today.json
+OUT ?= .local/inspect-report
+inspect-report:
+	uv run python scripts/inspect_report.py --logs $(LOGS) --platform $(PLATFORM) --out $(OUT)
+
+# Refresh the Platform billing export used for cost attribution (read-only API call).
+#   make platform-logs-export PLATFORM_ARGS="--time custom --from 2026-09-12T00:00:00+00:00 --to 2026-09-13T00:00:00+00:00"
+platform-logs-export:
+	uv run python scripts/platform_logs_export.py --out $(PLATFORM) $(PLATFORM_ARGS)

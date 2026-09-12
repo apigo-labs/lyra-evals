@@ -61,3 +61,5 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 "src/vohu_evals/console/*.py" = ["RUF001"] # Chinese console copy uses Chinese punctuation.
 "benchmarks/browsecomp/plugin.py" = ["E501"] # Frozen upstream evaluator prompt.
 "benchmarks/draco/plugin.py" = ["E501", "RUF001"] # Frozen upstream agent/judge prompts.
+"scripts/inspect_report.py" = ["RUF001"] # Chinese report copy uses Chinese punctuation.
+"scripts/platform_logs_export.py" = ["RUF001"] # Chinese CLI copy uses Chinese punctuation.
