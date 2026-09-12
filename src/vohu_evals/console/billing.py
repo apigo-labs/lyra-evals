@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -97,9 +98,43 @@ async def reconcile(scheduler, *, transport=None):
                         if response.status_code in {401, 403}:
                             raise ValueError("平台账单凭据失效或缺少工作区访问权限")
                         response.raise_for_status()
-                        cost = invoice(
-                            response.json(), record["request_id"], record.get("model", model)
-                        )
+                        payload = response.json()
+                        if payload.get("code") == 40405:
+                            pending += 1
+                            continue
+                        detail = payload.get("data") or {}
+                        if (
+                            payload.get("code") == 0
+                            and detail.get("id") == record["request_id"]
+                            and detail.get("settled") is True
+                            and "cost_usd_exact" not in detail
+                        ):
+                            # The deployed detail projection omits exact money; the list
+                            # projection retains it. Never replace it with rounded floats.
+                            stamp = datetime.fromisoformat(detail["time"].replace("Z", "+00:00"))
+                            listing = await client.get(
+                                "logs/list",
+                                params={
+                                    "workspace_id": config.workspace_id,
+                                    "q": record["request_id"],
+                                    "time": "custom",
+                                    "from": (stamp - timedelta(seconds=1)).isoformat(),
+                                    "to": (stamp + timedelta(seconds=1)).isoformat(),
+                                    "page_size": 100,
+                                },
+                            )
+                            listing.raise_for_status()
+                            listed = listing.json()
+                            matches = [
+                                item
+                                for item in (listed.get("data") or {}).get("items", [])
+                                if item.get("id") == record["request_id"]
+                            ]
+                            if listed.get("code") != 0 or len(matches) != 1:
+                                pending += 1
+                                continue
+                            payload = {"code": 0, "data": matches[0]}
+                        cost = invoice(payload, record["request_id"], record.get("model", model))
                         if cost is None:
                             pending += 1
                         else:

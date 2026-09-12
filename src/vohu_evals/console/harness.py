@@ -42,7 +42,9 @@ def codex_config(model: str, endpoint: str, effort: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def configure_effort(client: ACPClient, session: dict, effort: str) -> dict:
+async def configure_effort(
+    client: ACPClient, session: dict, effort: str, *, codex_config_effort: str | None = None
+) -> dict:
     """Only set an effort actually advertised by this ACP session; never infer effective effort."""
     evidence = {"requested_effort": effort, "serialized_effort": None, "effective_effort": None}
     if effort == "provider_default":
@@ -52,6 +54,11 @@ async def configure_effort(client: ACPClient, session: dict, effort: str) -> dic
         for option in session.get("configOptions", [])
         if option.get("category") == "thought_level"
     ]
+    if not candidates and codex_config_effort == effort:
+        # Custom-provider models may not be present in ACP's model catalog.
+        # Codex still receives the frozen config.toml; the relay must validate
+        # reasoning.effort on every outgoing request before any paid call.
+        return {**evidence, "effort_configuration": "codex_config_with_relay_validation"}
     if len(candidates) != 1:
         raise ACPError("ACP 未声明唯一 effort 配置，拒绝回退")
     option = candidates[0]

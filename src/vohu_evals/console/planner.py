@@ -36,6 +36,7 @@ class PlanInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     benchmarks: list[str] = Field(min_length=1, max_length=5)
     variants: list[VariantInput] = Field(min_length=1, max_length=32)
+    swe_subset: Literal["lite", "verified"] = "verified"
     sample_size: int = Field(default=3, ge=1, le=10000)
     trials: int = Field(default=1, ge=1, le=10)
     tau_simulator_target_id: str | None = None
@@ -163,11 +164,13 @@ def build_plan(spec: PlanInput, targets: list[dict], suite_root: Path | None = N
     ]
     datasets = {}
     if suite_root is not None:
-        from vohu_evals.suites.packs import load_pack
+        from vohu_evals.suites.packs import dataset_root, load_pack
 
         for benchmark in sorted(spec.benchmarks):
             try:
-                source, cases = load_pack(suite_root, benchmark)
+                source, cases = load_pack(
+                    dataset_root(suite_root, benchmark, spec.swe_subset), benchmark
+                )
             except FileNotFoundError:
                 blockers.append(f"{benchmark}: 数据尚未准备")
                 continue

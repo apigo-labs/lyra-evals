@@ -12,6 +12,12 @@ from pathlib import Path
 SUITES = {"ifeval", "gpqa", "livecodebench", "tau2", "swebench"}
 
 
+def dataset_root(root: Path, suite: str, swe_subset: str = "verified") -> Path:
+    if swe_subset not in {"lite", "verified"}:
+        raise ValueError("Unknown SWE subset")
+    return root / "variants/lite" if suite == "swebench" and swe_subset == "lite" else root
+
+
 def atomic_write(path: Path, payload: bytes) -> None:
     descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=".prepare-")
     temporary = Path(name)

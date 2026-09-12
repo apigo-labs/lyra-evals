@@ -88,6 +88,7 @@ async def live_episode(
             "max_output_tokens": variant["max_output_tokens"],
             "deadline_seconds": variant["deadline_seconds"],
             "effort": variant["effort"],
+            "allow_tools": workspace is not None or tau is not None,
             "input_rate": variant["price_bound"][0],
             "output_rate": variant["price_bound"][1],
         }
@@ -233,7 +234,12 @@ async def live_episode(
             session = await client.call(
                 "session/new", {"cwd": "/workspace", "mcpServers": mcp_servers}
             )
-            evidence = await configure_effort(client, session, variant["effort"])
+            evidence = await configure_effort(
+                client,
+                session,
+                variant["effort"],
+                codex_config_effort=variant["effort"] if variant["harness"] == "codex" else None,
+            )
             result = await client.call(
                 "session/prompt",
                 {"sessionId": session["sessionId"], "prompt": [{"type": "text", "text": prompt}]},
@@ -241,6 +247,13 @@ async def live_episode(
             if result.get("stopReason") != "end_turn":
                 raise ACPError("Agent 未正常完成回答: " + str(result.get("stopReason")))
             billing = json.loads((work / "ledger/requests.json").read_text())
+            if not any(r.get("status") == "received" for r in billing["requests"]):
+                raise ACPError("没有成功的 Gateway 请求证据，拒绝将 ACP 错误文本当作答案评分")
+            if (
+                evidence.get("effort_configuration") == "codex_config_with_relay_validation"
+                and billing["requests"]
+            ):
+                evidence["serialized_effort"] = variant["effort"]
             tau_score = tau_runtime.score() if tau_runtime else None
             return {
                 "tau_score": tau_score,

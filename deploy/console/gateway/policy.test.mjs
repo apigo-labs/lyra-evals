@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {reserveRequest,parseUsage} from './policy.mjs';
 const config = {model:'test',path:'/v1/responses',max_output_tokens:100,input_rate:2,output_rate:10,budget:1};
+test('closed-book profile removes harness tool declarations before sending', () => {
+  const result = reserveRequest({model:'test',tools:[{type:'web_search'}],tool_choice:'auto',parallel_tool_calls:true},10,{...config,allow_tools:false},0);
+  assert.equal(result.data.tools,undefined);
+  assert.equal(result.data.tool_choice,undefined);
+  assert.equal(result.data.parallel_tool_calls,undefined);
+  assert.throws(()=>reserveRequest({model:'test',tools:[{type:'web_search'}]},10,config,0));
+});
 test('reject bypasses and enforce integer reservations', () => {
   for(const max_output_tokens of [-100,0,NaN,Infinity,'100']) assert.throws(()=>reserveRequest({model:'test',max_output_tokens},100,config,0));
   assert.throws(()=>reserveRequest({model:'different'},100,config,0));

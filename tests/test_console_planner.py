@@ -181,3 +181,20 @@ def test_effort_negotiation_requires_acknowledgment():
         asyncio.run(configure_effort(Client(), session, "max"))
     result = asyncio.run(configure_effort(Client(), session, "provider_default"))
     assert result["effective_effort"] is None
+
+
+def test_custom_codex_model_requires_frozen_config_and_relay_validation():
+    import asyncio
+
+    from vohu_evals.console.acp import ACPError
+    from vohu_evals.console.harness import configure_effort
+
+    session = {"sessionId": "custom"}
+    with pytest.raises(ACPError):
+        asyncio.run(configure_effort(None, session, "high"))
+    with pytest.raises(ACPError):
+        asyncio.run(configure_effort(None, session, "high", codex_config_effort="low"))
+    result = asyncio.run(configure_effort(None, session, "high", codex_config_effort="high"))
+    assert result["serialized_effort"] is None
+    assert result["effective_effort"] is None
+    assert result["effort_configuration"] == "codex_config_with_relay_validation"

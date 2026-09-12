@@ -43,6 +43,8 @@ SQLite ledger 是本地运行事实源，保存不可变 manifest、case 状态�
 
 ## 相关页面
 
+- [[ifeval-statistical-reporting]]
+
 - [[fusion-router-evaluation-design]] — 横向比较与成本、延迟指标的拟议扩展。
 
 - [[vohu-evals-architecture]]

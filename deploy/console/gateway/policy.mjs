@@ -8,6 +8,11 @@ export function reserveRequest(data, bytes, config, reservedMicros) {
     for (const child of Object.values(value)) textOnly(child);
   }
   textOnly(data);
+  if(config.allow_tools === false) {
+    delete data.tools;
+    delete data.tool_choice;
+    delete data.parallel_tool_calls;
+  }
   if((data.tools || []).some(t => !['function','custom'].includes(t.type) && !(config.path === '/v1/messages' && !t.type && typeof t.name === 'string'))) throw Error('Managed tool forbidden');
   const chat = config.path === '/v1/chat/completions';
   const outputKey = config.path === '/v1/responses' ? 'max_output_tokens' : chat && config.model.startsWith('gpt-') ? 'max_completion_tokens' : 'max_tokens';
@@ -15,6 +20,7 @@ export function reserveRequest(data, bytes, config, reservedMicros) {
   if(chat) {delete data.max_tokens; delete data.max_completion_tokens;}
   if (!Number.isSafeInteger(requested) || requested <= 0) throw Error('Invalid output bound');
   data[outputKey] = Math.min(requested, config.max_output_tokens);
+  if(config.allow_tools === false) bytes = Buffer.byteLength(JSON.stringify(data), 'utf8');
   const upperMicros = Math.ceil((bytes + 32768) * config.input_rate + data[outputKey] * config.output_rate);
   if (!Number.isSafeInteger(upperMicros) || upperMicros <= 0 || reservedMicros + upperMicros > Math.floor(config.budget * 1e6)) throw Error('Episode budget exhausted');
   return {data, upperMicros};

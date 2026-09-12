@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from vohu_evals.suites.packs import load_pack
+from vohu_evals.suites.packs import dataset_root, load_pack
 from vohu_evals.suites.swe_live import command, preflight
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -31,7 +31,14 @@ class Preparations:
         identifier = plan["id"]
         try:
             async with self.lock:
-                manifest, rows = load_pack(ROOT / ".local/suites", "swebench")
+                manifest, rows = load_pack(
+                    dataset_root(
+                        ROOT / ".local/suites",
+                        "swebench",
+                        plan["manifest"].get("swe_subset", "verified"),
+                    ),
+                    "swebench",
+                )
                 frozen = plan["manifest"]["datasets"]["swebench"]
                 if manifest["sha256"] != frozen["sha256"]:
                     raise ValueError("Dataset changed")

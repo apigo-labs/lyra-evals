@@ -17,7 +17,7 @@ from vohu_evals.console.acp import docker_command
 from vohu_evals.console.live import RELAY_IMAGE, SUPPORTED, live_episode, price_bound
 from vohu_evals.console.planner import digest
 from vohu_evals.suites.adapters import grade_livecodebench, grade_text
-from vohu_evals.suites.packs import agent_input, load_pack
+from vohu_evals.suites.packs import agent_input, dataset_root, load_pack
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -38,7 +38,12 @@ async def prepare(plan: dict, budget: float) -> dict:
     if "swebench" in manifest["benchmarks"]:
         from vohu_evals.suites.swe_live import preflight
 
-        _, rows = load_pack(ROOT / ".local/suites", "swebench")
+        _, rows = load_pack(
+            dataset_root(
+                ROOT / ".local/suites", "swebench", manifest.get("swe_subset", "verified")
+            ),
+            "swebench",
+        )
         selected = set(manifest["datasets"]["swebench"]["case_ids"])
         manifest["swe_environments"] = await preflight(
             [r for r in rows if r["case_id"] in selected], ROOT
@@ -93,7 +98,10 @@ async def prepare(plan: dict, budget: float) -> dict:
                 raise ValueError(f"缺少执行镜像：{tag}")
             variant[field] = value
     for benchmark in manifest["benchmarks"]:
-        frozen, _ = load_pack(ROOT / ".local/suites", benchmark)
+        frozen, _ = load_pack(
+            dataset_root(ROOT / ".local/suites", benchmark, manifest.get("swe_subset", "verified")),
+            benchmark,
+        )
         if frozen["sha256"] != manifest.get("datasets", {}).get(benchmark, {}).get("sha256"):
             raise ValueError("题集与计划不一致，请重新冻结")
     manifest["controller_sha256"] = digest(
@@ -145,7 +153,12 @@ async def execute(scheduler, run: dict):
             start = time.monotonic()
             job["status"] = "running"
             scheduler.event(run, "启动真实作业", job["id"])
-            _, rows = load_pack(ROOT / ".local/suites", job["benchmark"])
+            _, rows = load_pack(
+                dataset_root(
+                    ROOT / ".local/suites", job["benchmark"], manifest.get("swe_subset", "verified")
+                ),
+                job["benchmark"],
+            )
             by_id = {row["case_id"]: row for row in rows}
             variant = variants[job["variant_id"]]
             case_slots = asyncio.Semaphore(run["per_job"])

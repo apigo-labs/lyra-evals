@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vohu_evals.suites.packs import load_pack
+from vohu_evals.suites.packs import dataset_root, load_pack
 
 DETAILS = {
     "ifeval": "官方 strict/loose 评分器与真实 ACP 调度已接入；价格上界估算可用，账单待对账",
@@ -31,6 +31,12 @@ def suite_status(root: Path, items: list[dict]) -> list[dict]:
                 error = "数据完整性检查失败"
         data_ready = manifest is not None
         reason = DETAILS[suite]
+        if suite == "swebench":
+            try:
+                lite, _ = load_pack(dataset_root(root, suite, "lite"), suite)
+                reason += f"；Lite {lite['count']} 题已冻结，可在新建计划中选择"
+            except (OSError, ValueError, KeyError, TypeError):
+                reason += "；Lite 数据尚未准备"
         if not data_ready:
             reason += "；" + (error or "数据尚未准备")
         result.append(

@@ -1082,6 +1082,7 @@ function RunDialog({
           body: JSON.stringify({
             name: payload.name,
             benchmarks: payload.benchmarks,
+            swe_subset: f.get("swe_subset") || "lite",
             sample_size: payload.sample_size,
             trials: payload.trials,
             max_jobs: payload.max_jobs,
@@ -1176,6 +1177,17 @@ function RunDialog({
         </div>
         <fieldset>
           <legend className="mb-2 text-xs font-medium">选择评测集</legend>
+          <label className="mb-3 block text-xs">
+            SWE 子集{" "}
+            <select
+              name="swe_subset"
+              defaultValue="lite"
+              className="ml-2 rounded border p-2"
+            >
+              <option value="lite">Lite · 300 题（优先）</option>
+              <option value="verified">Verified · 500 题</option>
+            </select>
+          </label>
           <div className="grid gap-2 sm:grid-cols-2">
             {benchmarks.map((b) => (
               <label

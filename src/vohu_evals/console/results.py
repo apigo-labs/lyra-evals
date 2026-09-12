@@ -16,6 +16,54 @@ def percentile(values: list[float], fraction: float) -> float | None:
     return ordered[max(0, math.ceil(len(ordered) * fraction) - 1)]
 
 
+def wilson_interval(correct: int, total: int) -> tuple[float | None, float | None]:
+    """95% prompt-level interval; descriptive, not a paired significance test."""
+    if not total:
+        return None, None
+    z = 1.959963984540054
+    p = correct / total
+    divisor = 1 + z * z / total
+    center = (p + z * z / (2 * total)) / divisor
+    radius = z * math.sqrt(p * (1 - p) / total + z * z / (4 * total**2)) / divisor
+    return max(0.0, center - radius), min(1.0, center + radius)
+
+
+def ifeval_metrics(job: dict, enabled: bool) -> dict:
+    fields = {
+        "ifeval_prompt_strict_accuracy": None,
+        "ifeval_prompt_loose_accuracy": None,
+        "ifeval_instruction_strict_accuracy": None,
+        "ifeval_instruction_loose_accuracy": None,
+        "ifeval_instruction_count": None,
+    }
+    if not enabled or job["benchmark"] != "ifeval":
+        return fields
+    episodes = job.get("episodes", [])
+    if len(episodes) != job["total"] or len({e["case_id"] for e in episodes}) != job["total"]:
+        return fields
+    details = [e.get("score", {}).get("details", {}) for e in episodes]
+    if not details or any(
+        not isinstance(d.get("strict_prompt"), bool)
+        or not isinstance(d.get("loose_prompt"), bool)
+        or not d.get("strict_instruction_list")
+        or len(d["strict_instruction_list"]) != len(d.get("loose_instruction_list", []))
+        for d in details
+    ):
+        return fields
+    total = sum(len(d["strict_instruction_list"]) for d in details)
+    return {
+        "ifeval_prompt_strict_accuracy": sum(d["strict_prompt"] for d in details) / len(details),
+        "ifeval_prompt_loose_accuracy": sum(d["loose_prompt"] for d in details) / len(details),
+        "ifeval_instruction_strict_accuracy": sum(
+            sum(d["strict_instruction_list"]) for d in details
+        )
+        / total,
+        "ifeval_instruction_loose_accuracy": sum(sum(d["loose_instruction_list"]) for d in details)
+        / total,
+        "ifeval_instruction_count": total,
+    }
+
+
 def result_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for run in runs:
@@ -33,6 +81,10 @@ def result_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             cost = job.get("cost")
             settled = cost is not None and (synthetic or job.get("billing_status") == "settled")
             scored = job.get("scored", job["completed"] if complete else 0)
+            valid = complete and scored == job["total"] and not synthetic
+            ci_low, ci_high = (
+                wilson_interval(job["correct"], job["total"]) if valid else (None, None)
+            )
             rows.append(
                 {
                     "run_id": run["id"],
@@ -40,6 +92,12 @@ def result_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "job_id": job["id"],
                     "created_at": run["created_at"],
                     "benchmark": job["benchmark"],
+                    "subset": manifest.get("swe_subset", "verified")
+                    if job["benchmark"] == "swebench"
+                    else manifest.get("datasets", {})
+                    .get(job["benchmark"], {})
+                    .get("source", {})
+                    .get("subset"),
                     "model": variant.get("connection", {}).get("model", job["target_name"]),
                     "harness": variant.get("harness", "synthetic" if synthetic else "unknown"),
                     "effort": variant.get("effort", "unknown"),
@@ -62,10 +120,13 @@ def result_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "planned": job["total"],
                     "completed": job["completed"],
                     "scored": scored,
+                    "scoring_coverage": scored / job["total"] if job["total"] else None,
+                    "accuracy_ci95_low": ci_low,
+                    "accuracy_ci95_high": ci_high,
+                    "accuracy_ci_method": "wilson_prompt_level" if valid else None,
+                    **ifeval_metrics(job, valid),
                     "correct": None if synthetic else job["correct"],
-                    "accuracy": job["correct"] / job["total"]
-                    if complete and not synthetic and job["total"]
-                    else None,
+                    "accuracy": job["correct"] / job["total"] if valid and job["total"] else None,
                     "provisional_accuracy": job["correct"] / job["total"]
                     if not synthetic and job["total"]
                     else None,
@@ -80,7 +141,7 @@ def result_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     if settled
                     else "pending",
                     "cost_per_correct_usd": cost / job["correct"]
-                    if complete and settled and not synthetic and job["correct"]
+                    if valid and settled and job["correct"]
                     else None,
                     "latency_mean_ms": mean(latencies) if latencies else None,
                     "latency_p50_ms": percentile(latencies, 0.5),
@@ -141,6 +202,7 @@ def episode_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                                 "run_name",
                                 "job_id",
                                 "benchmark",
+                                "subset",
                                 "model",
                                 "harness",
                                 "effort",
@@ -152,6 +214,15 @@ def episode_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         "status": episode["status"],
                         "correct": None if summary["synthetic"] else episode.get("correct"),
                         "latency_ms": episode.get("latency_ms"),
+                        "agent_duration_ms": episode.get("agent_duration_ms"),
+                        "serialized_effort": episode.get("serialized_effort"),
+                        "effective_effort": episode.get("effective_effort"),
+                        "strict_prompt": episode.get("score", {})
+                        .get("details", {})
+                        .get("strict_prompt"),
+                        "loose_prompt": episode.get("score", {})
+                        .get("details", {})
+                        .get("loose_prompt"),
                         "cost_usd": episode.get("cost_usd")
                         if episode.get("billing_status") == "settled"
                         else None,

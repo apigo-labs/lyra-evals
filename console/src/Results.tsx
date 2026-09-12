@@ -20,6 +20,7 @@ const rowSchema = z.object({
   run_name: z.string(),
   job_id: z.string(),
   benchmark: z.string(),
+  subset: z.string().nullable().optional(),
   model: z.string(),
   harness: z.string(),
   effort: z.string(),
@@ -226,6 +227,7 @@ export function Results({ onRun }: { onRun: (id: string) => void }) {
                     return r ? (
                       <div className="rounded border bg-white p-3 text-xs">
                         {r.model} · {r.benchmark}
+                        {r.subset ? ` / ${r.subset}` : ""}
                         <br />
                         {r.harness} / {r.effort}
                         <br />${fmt(r.cost_usd)}
@@ -291,6 +293,7 @@ export function Results({ onRun }: { onRun: (id: string) => void }) {
                 </td>
                 <td className="p-4">
                   {r.benchmark}
+                  {r.subset ? ` / ${r.subset}` : ""}
                   <div className="mt-2 text-neutral-500">
                     {r.synthetic ? "自检，无模型成绩" : r.metric}
                   </div>

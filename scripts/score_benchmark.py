@@ -17,7 +17,7 @@ from vohu_evals.suites.adapters import (
     swe_predictions,
     swe_score,
 )
-from vohu_evals.suites.packs import load_pack
+from vohu_evals.suites.packs import dataset_root, load_pack
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,10 +40,13 @@ def main():
         action="store_true",
         help="Run the official Docker evaluator (can build large images)",
     )
+    parser.add_argument("--swe-subset", choices=["lite", "verified"], default="verified")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", args.run_id):
         raise ValueError("Invalid run ID")
-    manifest, rows = load_pack(ROOT / ".local/suites", args.suite)
+    manifest, rows = load_pack(
+        dataset_root(ROOT / ".local/suites", args.suite, args.swe_subset), args.suite
+    )
     answers = json.loads(args.answers.read_text())
     if args.case_ids:
         ids = set(args.case_ids)

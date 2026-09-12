@@ -248,3 +248,37 @@ def test_swe_patch_includes_new_and_modified_files(tmp_path):
     (tmp_path / "new.py").write_text("new = True\n")
     patch = asyncio.run(collect_patch(tmp_path))
     assert "+x = 2" in patch and "+new = True" in patch
+
+
+def test_swe_lite_is_separate_and_frozen_in_plan(tmp_path):
+    from vohu_evals.console.planner import PlanInput, build_plan
+    from vohu_evals.suites.packs import dataset_root
+
+    freeze_pack(tmp_path, "swebench", [{"case_id": "verified"}], {"subset": "verified"})
+    freeze_pack(
+        dataset_root(tmp_path, "swebench", "lite"),
+        "swebench",
+        [{"case_id": "lite"}],
+        {"subset": "lite"},
+    )
+    target = {
+        "id": "test",
+        "model": "gpt-test",
+        "protocol": "openai_responses",
+        "endpoint": "https://api.apigo.ai/v1",
+    }
+    spec = PlanInput(
+        name="Lite",
+        benchmarks=["swebench"],
+        swe_subset="lite",
+        sample_size=1,
+        variants=[{"target_id": "test", "harness": "codex", "efforts": ["high"]}],
+    )
+    plan = build_plan(spec, [target], tmp_path)
+    assert plan["manifest"]["datasets"]["swebench"]["case_ids"] == ["lite"]
+    assert plan["manifest"]["datasets"]["swebench"]["source"]["subset"] == "lite"
+    assert load_pack(tmp_path, "swebench")[1][0]["case_id"] == "verified"
+    spec.swe_subset = "verified"
+    assert build_plan(spec, [target], tmp_path)["id"] != plan["id"]
+    with pytest.raises(ValueError):
+        dataset_root(tmp_path, "swebench", "../other")

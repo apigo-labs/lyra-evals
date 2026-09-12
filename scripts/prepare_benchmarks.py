@@ -13,7 +13,7 @@ from urllib.request import urlopen
 from vohu_evals.benchmark import load_benchmark
 from vohu_evals.dataset import DatasetCache
 from vohu_evals.evaluator import EvaluatorResourceCache
-from vohu_evals.suites.packs import freeze_pack, gpqa_rows
+from vohu_evals.suites.packs import dataset_root, freeze_pack, gpqa_rows
 
 ROOT = Path(__file__).resolve().parents[1]
 LCB_REV = "0fe84c3912ea0c4d4a78037083943e8f0c4dd505"
@@ -40,8 +40,8 @@ def download(url: str, destination: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def prepare(suite: str, gpqa_csv: Path | None = None):
-    packs = ROOT / ".local/suites"
+def prepare(suite: str, gpqa_csv: Path | None = None, swe_subset: str = "verified"):
+    packs = dataset_root(ROOT / ".local/suites", suite, swe_subset)
     if suite == "ifeval":
         benchmark = load_benchmark(ROOT, suite)
         snapshot = DatasetCache(ROOT / ".cache/datasets").materialize(benchmark.manifest)
@@ -143,19 +143,22 @@ def prepare(suite: str, gpqa_csv: Path | None = None):
     if suite == "swebench":
         import pyarrow.parquet as parquet
 
-        url = f"https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified/resolve/{SWE_REV}/data/test-00000-of-00001.parquet"
-        path = packs / "downloads" / f"swe-{SWE_REV}.parquet"
+        revision = "6ec7bb89b9342f664a54a6e0a6ea6501d3437cc2" if swe_subset == "lite" else SWE_REV
+        name = "SWE-bench_Lite" if swe_subset == "lite" else "SWE-bench_Verified"
+        url = f"https://huggingface.co/datasets/princeton-nlp/{name}/resolve/{revision}/data/test-00000-of-00001.parquet"
+        path = packs / "downloads" / f"swe-{revision}.parquet"
         checksum = download(url, path)
         rows = [
             {**row, "case_id": row["instance_id"]} for row in parquet.read_table(path).to_pylist()
         ]
-        if len(rows) != 500:
-            raise ValueError("SWE Verified requires 500 rows")
+        expected = 300 if swe_subset == "lite" else 500
+        if len(rows) != expected:
+            raise ValueError(f"SWE {swe_subset} requires {expected} rows")
         return freeze_pack(
             packs,
             suite,
             rows,
-            {"url": url, "revision": SWE_REV, "sha256": checksum, "subset": "verified"},
+            {"url": url, "revision": revision, "sha256": checksum, "subset": swe_subset},
         )
     if suite == "tau2":
         upstream = ROOT / ".local/upstream/tau2"
@@ -204,10 +207,11 @@ def main():
         "suites", nargs="+", choices=["ifeval", "gpqa", "livecodebench", "tau2", "swebench"]
     )
     parser.add_argument("--gpqa-csv", type=Path)
+    parser.add_argument("--swe-subset", choices=["lite", "verified"], default="verified")
     args = parser.parse_args()
     for suite in args.suites:
         try:
-            print(json.dumps(prepare(suite, args.gpqa_csv), ensure_ascii=False))
+            print(json.dumps(prepare(suite, args.gpqa_csv, args.swe_subset), ensure_ascii=False))
         except Exception as exc:
             print(json.dumps({"suite": suite, "error": str(exc)}, ensure_ascii=False))
             raise

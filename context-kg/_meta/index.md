@@ -10,6 +10,8 @@ sources: 0
 
 ## Technical
 
+- [[concurrency-and-quota-design]] — 做题/请求/评分分层并发、APIGO 配额与自适应调度（设计提案） | concurrency, quota
+
 - [[model-effort-evaluation-design]] — 模型/Harness/effort 矩阵、预算公平性、Console 计划与验收（待实现） | evaluation, proposal
 
 - [[local-console-execution-design]] — 本地 Console、Paper/Ink 主题、Docker/ACP 并行调度与交付边界 | console, execution
@@ -17,6 +19,10 @@ sources: 0
 - [[vohu-evals-architecture]] — VOHU 专用评测运行链路与模块边界 | architecture, evaluation, vohu
 
 ## Quality
+
+- [[fusion-roadshow-protocol]] — 三赛道路演提案状态与比较边界 | proposal, evaluation
+
+- [[ifeval-statistical-reporting]] — 四项指标、评分覆盖率、区间与逐题执行证据 | ifeval, statistics
 
 - [[benchmark-onboarding-checklist]] — 当前六个插件、候选接入项与 Fusion 无内置搜索约束 | benchmark, integration
 - [[benchmark-integration]] — Benchmark 插件、数据冻结与就绪门禁 | quality, benchmark, dataset

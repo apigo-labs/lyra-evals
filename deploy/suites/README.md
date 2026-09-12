@@ -24,3 +24,7 @@ Agent 工作区从官方实例镜像复制，保留编译产物和环境兼容�
 账单在 Console“结果与导出 → 配置账单连接”配置平台访问令牌和 workspace ID。模型 API Key 不能替代平台凭据。每分钟自动同步或手动触发；精确费用需请求 ID、模型与 settled 状态匹配。未结算或证据缺失保持未知，重复同步不会重复累计。
 
 内测 Fusion 别名应从鉴权后的 `/v1/models` 判断可用性，不能用公共价格目录代替模型目录。没有公开报价时，可在“模型连接 → 配置内测价格上限”填写供应商确认的输入/输出费率上限，覆盖缓存与推理计费；冻结计划保留来源 `operator_supplied_upper_bound`。没有已知费率上限时不发起付费调用，不能猜价或绕过已授权总预算。真实账单仍以请求级结算为准。
+
+## SWE-bench Lite
+
+新建 Console 计划优先选 Lite（官方 test 划分 300 题），也可选 Verified（500 题）。两者独立冻结，不覆盖已有题库；结果/逐题导出携带 subset。准备命令：`uv run --extra benchmarks python scripts/prepare_benchmarks.py swebench --swe-subset lite`。外部答案评分同样传 `--swe-subset lite`，默认仍为 verified 以兼容已有脚本。Lite 仍需逐题官方实例镜像和模型预算；抽样结果不能标为全量 Lite 分数。
