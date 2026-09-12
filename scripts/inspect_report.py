@@ -45,9 +45,10 @@ BENCHMARK_LABELS = {
 BENCHMARK_ORDER = ["ifeval", "gpqa_diamond", "livecodebench_v6"]
 VARIANT_ORDER = [
     "gpt-5.6-luna",
-    "gpt-5.6-terra",
+    "gpt-5.6-sol",
     "gpt-6-astra",
     "claude-sonnet-5",
+    "claude-opus-5",
     "apigo/lyra-auto",
     "apigo/lyra-budget",
     "apigo/lyra-quality",
@@ -1071,7 +1072,7 @@ def render_html(rows: list[dict], meta: dict) -> str:
     )
     for benchmark in sorted(benchmarks, key=lambda name: _sort_key((name, ""))):
         group = benchmarks[benchmark]
-        table = _comparison_table(group, ["gpt-6-astra", "gpt-5.6-terra"])
+        table = _comparison_table(group, ["gpt-6-astra", "gpt-5.6-sol", "claude-sonnet-5", "claude-opus-5"])
         if table:
             parts.append(f"<h3>{esc(group[0]['benchmark_label'])}</h3>")
             parts.append(table)

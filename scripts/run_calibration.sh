@@ -21,7 +21,7 @@ export INSPECT_LOG_DIR="$LOG_DIR"
 
 # "<model>[:<reasoning-effort>]" — effort omitted means provider default (Fusion tiers are
 # routing modes, not efforts, so they never carry one).
-DEFAULT_VARIANTS="gpt-5.6-luna:high gpt-5.6-terra:high gpt-6-astra:high claude-sonnet-5:high apigo/lyra-auto apigo/lyra-budget apigo/lyra-quality"
+DEFAULT_VARIANTS="gpt-5.6-luna:high gpt-5.6-sol:high gpt-6-astra:high claude-sonnet-5:high claude-opus-5:high apigo/lyra-auto apigo/lyra-budget apigo/lyra-quality"
 VARIANTS="${VARIANTS:-$DEFAULT_VARIANTS}"
 
 # task | frozen id file | max_tokens (includes reasoning tokens; see roadshow design §4)
