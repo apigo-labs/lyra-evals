@@ -284,6 +284,7 @@ def test_html_builder_runs_and_contains_every_benchmark_section():
         "gpt-5.6-terra": {"input_usd_per_1m": 2, "output_usd_per_1m": 12},
     }
     report, detailed = inspect_report.build_rows(rows, runs, entries, prices)
+    baselines = inspect_report.compute_baselines(report, detailed)
     document = inspect_report.render_html(
         report,
         {
@@ -293,6 +294,7 @@ def test_html_builder_runs_and_contains_every_benchmark_section():
             "samples_per_cell": 2,
             "n_cells": len(report),
         },
+        baselines,
     )
     for label in inspect_report.BENCHMARK_LABELS.values():
         assert label in document
@@ -302,6 +304,13 @@ def test_html_builder_runs_and_contains_every_benchmark_section():
     assert "观察到" in document and "显著" not in document
     assert "Fusion auto" in document
     assert len(detailed) == len(rows)
+    # The baseline section, its plain reading and the new scatter marks all made it into the page.
+    assert "路由基线对比" in document
+    assert "BestSingle" in document
+    assert inspect_report.BASELINE_LABELS["oracle"] in document
+    assert "路由器至少要压过随机混合线" in document and "才谈得上会选模型" in document
+    assert "可路由题越少" in document and "这套题越看不出路由能力" in document
+    assert "stroke-dasharray" in document
 
 
 def test_main_writes_every_artifact(tmp_path, monkeypatch):
@@ -361,10 +370,23 @@ def test_main_writes_every_artifact(tmp_path, monkeypatch):
     for name in ("report.html", "report.csv", "report.json", "samples.csv", "runs.jsonl"):
         assert (out / name).exists()
     written = json.loads((out / "report.json").read_text(encoding="utf-8"))
-    assert len(written) == len(runs)
+    assert len(written["rows"]) == len(runs)
+    assert set(written["baselines"]) == {"ifeval", "gpqa_diamond", "livecodebench_v6"}
+    block = written["baselines"]["ifeval"]
+    assert block["best_single"]["model"] == "gpt-6-astra"
+    assert block["pool"] == ["gpt-6-astra", "gpt-5.6-terra"]
+    assert "cost_fallback_samples" in block and "cost_fallback_note" in block
     with (out / "report.csv").open(encoding="utf-8") as stream:
-        first = next(iter(csv.DictReader(stream)))
-        assert first.keys() >= {"benchmark", "accuracy", "wilson_low"}
+        written_rows = list(csv.DictReader(stream))
+    assert written_rows[0].keys() >= {"benchmark", "accuracy", "wilson_low"}
+    baseline_rows = [row for row in written_rows if row["model"].startswith("baseline:")]
+    assert {row["model"] for row in baseline_rows} == {
+        "baseline:best_single",
+        "baseline:oracle",
+        "baseline:random",
+    }
+    assert all(row["accuracy"] and row["cost_usd_per_sample"] for row in baseline_rows)
+    assert all(row["wilson_low"] == "" and row["n_planned"] == "" for row in baseline_rows)
 
 
 def test_header_to_run_reads_the_inspect_header_shape():
@@ -386,3 +408,233 @@ def test_header_to_run_reads_the_inspect_header_shape():
     assert parsed["model"] == "apigo/lyra-auto"
     assert parsed["n_planned"] == 3
     assert parsed["wall_time_s"] == pytest.approx(88.0)
+
+
+# --------------------------------------------------------------------------- router baselines
+
+
+def _baseline_fixture():
+    """Four fixed models + one Fusion variant over four frozen ifeval samples.
+
+    Per-sample cost is driven by the duration match, so the layout is explicit:
+      cheap  $0.001/sample, right on s1 only          -> cheapest, and wrong on s2/s3
+      mid    $0.004/sample, right on s1, s2           -> on the front
+      pricey $0.010/sample, right on s1, s2, s3       -> best accuracy (3/4)
+      dud    $0.020/sample, right on s1, s2, s3       -> same accuracy, dearer: dominated
+    s4 is solved by nobody. s2 is routable (cheap fails, others succeed); so is s3.
+    """
+    plan = {
+        "cheap": (0.001, {"s1"}),
+        "mid": (0.004, {"s1", "s2"}),
+        "pricey": (0.010, {"s1", "s2", "s3"}),
+        "dud": (0.020, {"s1", "s2", "s3"}),
+    }
+    sample_ids = ["s1", "s2", "s3", "s4"]
+    rows, runs, entries = [], [], []
+    minute = 0
+    for model, (unit, correct) in plan.items():
+        for index, sample_id in enumerate(sample_ids):
+            seconds = 5.0 + index
+            rows.append(
+                sample_row(
+                    "ifeval",
+                    f"openai-api/apigo/{model}",
+                    sample_id,
+                    "1" if sample_id in correct else "0",
+                    seconds,
+                )
+            )
+            entries.append(billing(model, minute, unit, int(seconds * 1000)))
+            minute += 1
+        runs.append(
+            run(
+                "ifeval",
+                model,
+                n_planned=4,
+                started="2026-09-12T13:00:00+00:00",
+                completed="2026-09-12T13:59:00+00:00",
+            )
+        )
+    return rows, runs, entries, sample_ids
+
+
+def _baselines_for(rows, runs, entries):
+    report, detailed = inspect_report.build_rows(rows, runs, entries, {})
+    return inspect_report.compute_baselines(report, detailed), report, detailed
+
+
+def test_best_single_picks_the_top_accuracy_and_breaks_ties_by_cost():
+    rows, runs, entries, _ = _baseline_fixture()
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    best = baselines["ifeval"]["best_single"]
+    # `pricey` and `dud` both score 3/4; the cheaper one wins the tie.
+    assert best["model"] == "pricey"
+    assert best["accuracy"] == pytest.approx(0.75)
+    assert best["cost_usd_per_sample"] == pytest.approx(0.010)
+
+
+def test_oracle_picks_the_cheapest_correct_model_and_counts_unsolved_samples():
+    rows, runs, entries, _ = _baseline_fixture()
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    oracle = baselines["ifeval"]["oracle"]
+    # s1 solved by everyone -> cheap ($0.001); s2 -> mid ($0.004); s3 -> pricey ($0.010);
+    # s4 nobody solved -> the cheapest attempt ($0.001).
+    assert oracle["accuracy"] == pytest.approx(0.75)
+    assert oracle["cost_usd_per_sample"] == pytest.approx((0.001 + 0.004 + 0.010 + 0.001) / 4)
+    # s2 and s3: the cheapest model failed but another one succeeded.
+    assert oracle["routable_share"] == pytest.approx(0.5)
+    assert oracle["unsolved_share"] == pytest.approx(0.25)
+
+
+def test_random_uniform_averages_accuracy_and_cost_over_the_fixed_pool():
+    rows, runs, entries, _ = _baseline_fixture()
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    uniform = baselines["ifeval"]["random_uniform"]
+    assert uniform["accuracy"] == pytest.approx((0.25 + 0.5 + 0.75 + 0.75) / 4)
+    assert uniform["cost_usd_per_sample"] == pytest.approx((0.001 + 0.004 + 0.010 + 0.020) / 4)
+
+
+def test_pareto_front_drops_the_dominated_model():
+    rows, runs, entries, _ = _baseline_fixture()
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    front = baselines["ifeval"]["pareto_front"]
+    # `dud` costs twice `pricey` for the same accuracy, so it never reaches the front.
+    assert [point["model"] for point in front] == ["cheap", "mid", "pricey"]
+
+
+def test_fusion_variants_are_never_in_the_candidate_pool():
+    rows, runs, entries, _ = _baseline_fixture()
+    rows += [
+        sample_row("ifeval", "openai-api/apigo/apigo/lyra-auto", sample_id, "1", 5.0)
+        for sample_id in ("s1", "s2", "s3", "s4")
+    ]
+    runs.append(
+        run(
+            "ifeval",
+            "apigo/lyra-auto",
+            n_planned=4,
+            started="2026-09-12T13:00:00+00:00",
+            completed="2026-09-12T13:59:00+00:00",
+        )
+    )
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    block = baselines["ifeval"]
+    assert sorted(block["pool"]) == ["cheap", "dud", "mid", "pricey"]
+    assert block["oracle"]["accuracy"] == pytest.approx(0.75)  # unchanged by the 4/4 Fusion run
+    assert [variant["model"] for variant in block["variants"]] == ["apigo/lyra-auto"]
+
+
+def test_per_sample_cost_falls_back_to_the_run_average_and_is_counted():
+    rows, runs, entries, _ = _baseline_fixture()
+    # Drop the billing line item that matches `mid`'s 8s sample: that sample has to fall back.
+    entries = [
+        entry for entry in entries if not (entry["model"] == "mid" and entry["duration_ms"] == 8000)
+    ]
+    baselines, report, detailed = _baselines_for(rows, runs, entries)
+    block = baselines["ifeval"]
+    assert block["cost_fallback_samples"]["by_model"]["mid"] == 1
+    assert block["cost_fallback_samples"]["total"] == 1
+    assert "运行平均每题成本" in block["cost_fallback_note"]
+    # Exactly one `mid` sample lost its duration match and took the run average instead.
+    unmatched = [
+        row for row in detailed if row["variant"] == "mid" and row["cost_usd_matched"] == ""
+    ]
+    assert len(unmatched) == 1
+    # `mid` now settles 3 x $0.004 over 4 samples, so its run average is $0.003 and the
+    # per-sample mean mixes three matched values with that one fallback.
+    average = next(row for row in report if row["model"] == "mid")["cost_usd_per_sample"]
+    assert average == pytest.approx(0.003)
+    mid_point = next(p for p in block["pareto_front"] if p["model"] == "mid")
+    assert mid_point["cost_usd_per_sample"] == pytest.approx((0.004 * 3 + 0.003) / 4)
+
+
+def test_headroom_reports_no_room_when_oracle_equals_best_single():
+    # Two fixed models with identical answers: the oracle cannot beat the best single model.
+    rows, runs, entries = [], [], []
+    minute = 0
+    for model, unit in (("cheap", 0.001), ("pricey", 0.010)):
+        for index, sample_id in enumerate(("s1", "s2")):
+            seconds = 5.0 + index
+            rows.append(
+                sample_row(
+                    "ifeval",
+                    f"openai-api/apigo/{model}",
+                    sample_id,
+                    "1" if sample_id == "s1" else "0",
+                    seconds,
+                )
+            )
+            entries.append(billing(model, minute, unit, int(seconds * 1000)))
+            minute += 1
+        runs.append(run("ifeval", model, n_planned=2, completed="2026-09-12T13:59:00+00:00"))
+    rows += [
+        sample_row("ifeval", "openai-api/apigo/apigo/lyra-auto", "s1", "1", 5.0),
+        sample_row("ifeval", "openai-api/apigo/apigo/lyra-auto", "s2", "0", 6.0),
+    ]
+    runs.append(
+        run("ifeval", "apigo/lyra-auto", n_planned=2, completed="2026-09-12T13:59:00+00:00")
+    )
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    block = baselines["ifeval"]
+    assert block["oracle"]["accuracy"] == block["best_single"]["accuracy"]
+    (variant,) = block["variants"]
+    assert variant["headroom_is_empty"] is True
+    assert variant["headroom_captured"] is None
+    assert "无空间" in inspect_report._baseline_table(block)
+
+
+def test_random_mix_line_classifies_a_fusion_point_above_and_below():
+    front = [
+        {"model": "cheap", "cost_usd_per_sample": 0.001, "accuracy": 0.25},
+        {"model": "pricey", "cost_usd_per_sample": 0.011, "accuracy": 0.75},
+    ]
+    # Halfway in cost, the input-agnostic mix reaches 0.50.
+    assert inspect_report.random_mix_accuracy(front, 0.006) == pytest.approx(0.5)
+    assert inspect_report.classify_vs_mix(front, 0.006, 0.70) == "是"
+    assert inspect_report.classify_vs_mix(front, 0.006, 0.30) == "否"
+    assert inspect_report.classify_vs_mix(front, 0.006, 0.50) == "持平"
+    # Outside the front's cost range the line is clamped, never extrapolated.
+    assert inspect_report.random_mix_accuracy(front, 0.0001) == pytest.approx(0.25)
+    assert inspect_report.random_mix_accuracy(front, 0.9) == pytest.approx(0.75)
+    assert inspect_report.classify_vs_mix(front, None, 0.5) == "—"
+
+
+def test_random_mix_line_also_judges_the_cost_axis():
+    front = [
+        {"model": "cheap", "cost_usd_per_sample": 0.001, "accuracy": 0.25},
+        {"model": "pricey", "cost_usd_per_sample": 0.011, "accuracy": 0.75},
+    ]
+    # Same accuracy as the cheapest front model, for less money: still a win over mixing.
+    assert inspect_report.random_mix_cost(front, 0.25) == pytest.approx(0.001)
+    assert inspect_report.classify_vs_mix(front, 0.0004, 0.25) == "是"
+    assert inspect_report.classify_vs_mix(front, 0.001, 0.25) == "持平"
+    # Same accuracy, ten times the money: the mix line does it cheaper.
+    assert inspect_report.classify_vs_mix(front, 0.010, 0.25) == "否"
+    # More accurate than any mix can reach at any price.
+    assert inspect_report.random_mix_cost(front, 0.9) is None
+    assert inspect_report.classify_vs_mix(front, 0.5, 0.9) == "是"
+
+
+def test_baseline_table_and_csv_rows_carry_the_three_baselines():
+    rows, runs, entries, _ = _baseline_fixture()
+    rows += [
+        sample_row("ifeval", "openai-api/apigo/apigo/lyra-auto", sample_id, score, 5.0)
+        for sample_id, score in (("s1", "1"), ("s2", "1"), ("s3", "0"), ("s4", "0"))
+    ]
+    runs.append(
+        run("ifeval", "apigo/lyra-auto", n_planned=4, completed="2026-09-12T13:59:00+00:00")
+    )
+    baselines, _, _ = _baselines_for(rows, runs, entries)
+    table = inspect_report._baseline_table(baselines["ifeval"])
+    assert "BestSingle" in table and "pricey" in table
+    assert inspect_report.BASELINE_LABELS["oracle"] in table
+    assert inspect_report.BASELINE_LABELS["random"] in table
+    assert "Fusion auto" in table
+    csv_rows = inspect_report.baseline_csv_rows(baselines)
+    assert [row["model"] for row in csv_rows] == [
+        "baseline:best_single",
+        "baseline:oracle",
+        "baseline:random",
+    ]
+    assert all(row["benchmark"] == "ifeval" for row in csv_rows)
+    assert all(row["n_correct"] == "" for row in csv_rows)

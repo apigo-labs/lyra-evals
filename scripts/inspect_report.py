@@ -4,6 +4,10 @@ Reads the `.eval` logs of one run set, flattens them with `scripts/inspect_summa
 the Platform billing export, and writes `report.json`, `report.csv`, `samples.csv` and a
 self-contained `report.html` (inline CSS, hand-rendered SVG, no network at open time).
 
+Router baselines: BestSingle / Oracle / Random (uniform) and the input-agnostic random-mix
+line over the fixed models' Pareto front, following the LLMRouterBench / RouterBench / Google
+"Universal Model Routing" conventions. The candidate pool is the fixed models only.
+
 Cost attribution rule: Platform bills every Gateway request as its own line item and the Fusion
 routing models (`apigo/lyra-*`) appear as their own line items with their own cost, so no
 sub-call summing is needed. Inspect does not record the Gateway request id, so a run's cost is
@@ -22,6 +26,7 @@ import argparse
 import csv
 import html
 import importlib.util
+import itertools
 import json
 import math
 import statistics
@@ -482,6 +487,336 @@ def _sort_key(key: tuple[str, str]) -> tuple[int, str, int, str]:
     return benchmark_rank, benchmark, model_rank, model
 
 
+# --------------------------------------------------------------------------- router baselines
+
+# Standard router-evaluation baselines (LLMRouterBench / RouterBench / Google "Universal Model
+# Routing"). The candidate pool is the FIXED models only -- they are the alternatives the router
+# chooses between, so a Fusion variant is never its own baseline. Everything is computed per
+# benchmark on the same frozen sample ids; a sample counts as correct for a model only when
+# score == "1", so errors and empty scores count as incorrect and the denominator stays n_planned.
+
+BASELINE_CSV_MODELS = {
+    "best_single": "baseline:best_single",
+    "oracle": "baseline:oracle",
+    "random": "baseline:random",
+}
+BASELINE_LABELS = {
+    "best_single": "BestSingle（最强单模型）",
+    "oracle": "Oracle（理论上界）",
+    "random": "Random（均匀随机）",
+}
+COST_FALLBACK_NOTE = (
+    "逐题成本优先用按请求时长匹配到的账单金额；匹配不上的题回退到该模型在本赛道的"
+    "运行平均每题成本（总结算成本 ÷ 题数）。"
+)
+
+
+def _sample_cost_table(
+    detailed: list[dict], benchmark: str, model: str, run_average: float | None
+) -> tuple[dict[str, float], int]:
+    """{sample_id: cost}: the duration-matched cost, else the model's run-average per sample."""
+    costs: dict[str, float] = {}
+    fallback = 0
+    for row in detailed:
+        if row.get("benchmark") != benchmark or row.get("variant") != model:
+            continue
+        sample_id = str(row.get("sample_id"))
+        matched = _number(row.get("cost_usd_matched"))
+        if matched is not None:
+            costs[sample_id] = matched
+        elif run_average is not None:
+            costs[sample_id] = run_average
+            fallback += 1
+    return costs, fallback
+
+
+def pareto_front(points: list[dict]) -> list[dict]:
+    """Empirical Pareto front in (cost, accuracy): cheapest first, keep strict quality gains.
+
+    Points are `{"model", "cost_usd_per_sample", "accuracy"}`; a model that is both pricier and
+    less accurate than another is dominated and drops out.
+    """
+    ordered = sorted(points, key=lambda point: (point["cost_usd_per_sample"], -point["accuracy"]))
+    front: list[dict] = []
+    best: float | None = None
+    for point in ordered:
+        if best is None or point["accuracy"] > best + 1e-12:
+            front.append(point)
+            best = point["accuracy"]
+    return front
+
+
+def random_mix_accuracy(front: list[dict], cost: float | None) -> float | None:
+    """Accuracy an input-agnostic random mix of the two adjacent front models reaches at `cost`.
+
+    Mixing two front points with probability p traces the straight segment between them, so the
+    frontier of all input-agnostic routers is the polyline through the front (Google UMR baseline).
+    Outside the front's cost range the polyline is clamped: no mix is cheaper than the cheapest
+    model or more accurate than the best one.
+    """
+    if not front or cost is None:
+        return None
+    if cost <= front[0]["cost_usd_per_sample"]:
+        return front[0]["accuracy"]
+    if cost >= front[-1]["cost_usd_per_sample"]:
+        return front[-1]["accuracy"]
+    for left, right in itertools.pairwise(front):
+        low, high = left["cost_usd_per_sample"], right["cost_usd_per_sample"]
+        if low <= cost <= high:
+            span = high - low
+            if span <= 0:
+                return max(left["accuracy"], right["accuracy"])
+            return left["accuracy"] + (cost - low) / span * (right["accuracy"] - left["accuracy"])
+    return front[-1]["accuracy"]
+
+
+def random_mix_cost(front: list[dict], accuracy: float | None) -> float | None:
+    """Cheapest cost at which an input-agnostic random mix reaches `accuracy`.
+
+    The inverse of `random_mix_accuracy`, so a point can be judged on the cost axis too: equal
+    accuracy for less money is as much a win over input-agnostic mixing as more accuracy for the
+    same money. `None` means the mix cannot reach that accuracy at any price.
+    """
+    if not front or accuracy is None:
+        return None
+    if accuracy <= front[0]["accuracy"]:
+        return front[0]["cost_usd_per_sample"]
+    if accuracy > front[-1]["accuracy"]:
+        return None
+    for left, right in itertools.pairwise(front):
+        if left["accuracy"] <= accuracy <= right["accuracy"]:
+            span = right["accuracy"] - left["accuracy"]
+            if span <= 0:
+                return min(left["cost_usd_per_sample"], right["cost_usd_per_sample"])
+            ratio = (accuracy - left["accuracy"]) / span
+            return left["cost_usd_per_sample"] + ratio * (
+                right["cost_usd_per_sample"] - left["cost_usd_per_sample"]
+            )
+    return front[-1]["cost_usd_per_sample"]
+
+
+def classify_vs_mix(
+    front: list[dict], cost: float | None, accuracy: float | None, *, eps: float = 1e-9
+) -> str:
+    """是 / 否 / 持平 against the input-agnostic random-mix line.
+
+    A point counts as above the line when it is higher (more accurate at the same cost) or to its
+    left (as accurate for less money); 否 is the mirror image, and everything else sits on it.
+    """
+    if accuracy is None or cost is None or not front:
+        return "—"
+    line_accuracy = random_mix_accuracy(front, cost)
+    line_cost = random_mix_cost(front, accuracy)
+    above = line_accuracy is not None and accuracy > line_accuracy + eps
+    below = line_accuracy is not None and accuracy < line_accuracy - eps
+    left = line_cost is None or cost < line_cost - eps
+    right = line_cost is not None and cost > line_cost + eps
+    if above or left:
+        return "是"
+    if below or right:
+        return "否"
+    return "持平"
+
+
+def _r(value: float | None, digits: int) -> float | None:
+    return None if value is None else round(value, digits)
+
+
+def _baseline_entry(label: str, accuracy: float | None, cost: float | None) -> dict:
+    return {"label": label, "accuracy": _r(accuracy, 4), "cost_usd_per_sample": _r(cost, 6)}
+
+
+def compute_baselines(report: list[dict], detailed: list[dict]) -> dict[str, dict]:
+    """BestSingle / Oracle / Random / Pareto-random-mix per benchmark, over the fixed-model pool."""
+    by_benchmark: dict[str, list[dict]] = {}
+    for row in report:
+        by_benchmark.setdefault(row["benchmark"], []).append(row)
+
+    result: dict[str, dict] = {}
+    for benchmark, rows in by_benchmark.items():
+        fixed_rows = [row for row in rows if row["is_fusion"] != "true"]
+        if not fixed_rows:
+            continue
+        n_planned = max((int(row["n_planned"] or 0) for row in fixed_rows), default=0)
+
+        pool: list[dict] = []
+        fallback_by_model: dict[str, int] = {}
+        for row in fixed_rows:
+            model = row["model"]
+            run_average = _number(row.get("cost_usd_per_sample"))
+            costs, fallback = _sample_cost_table(detailed, benchmark, model, run_average)
+            fallback_by_model[model] = fallback
+            correct = {
+                str(sample["sample_id"])
+                for sample in detailed
+                if sample.get("benchmark") == benchmark
+                and sample.get("variant") == model
+                and sample.get("score") == "1"
+            }
+            pool.append(
+                {
+                    "model": model,
+                    "accuracy": _number(row.get("accuracy")),
+                    "cost": _mean(list(costs.values())),
+                    "costs": costs,
+                    "correct": correct,
+                }
+            )
+
+        sample_ids = sorted(
+            {
+                str(sample["sample_id"])
+                for sample in detailed
+                if sample.get("benchmark") == benchmark
+                and sample.get("variant") in {entry["model"] for entry in pool}
+            }
+        )
+        denominator = n_planned or len(sample_ids)
+
+        best = sorted(
+            pool,
+            key=lambda entry: (
+                -(entry["accuracy"] if entry["accuracy"] is not None else -1.0),
+                entry["cost"] if entry["cost"] is not None else math.inf,
+                VARIANT_ORDER.index(entry["model"])
+                if entry["model"] in VARIANT_ORDER
+                else len(VARIANT_ORDER),
+            ),
+        )[0]
+
+        chosen_costs: list[float] = []
+        solved = 0
+        routable = 0
+        for sample_id in sample_ids:
+            winners = [entry for entry in pool if sample_id in entry["correct"]]
+            priced = [entry for entry in pool if sample_id in entry["costs"]]
+            cheapest = min(priced, key=lambda entry: entry["costs"][sample_id]) if priced else None
+            if winners:
+                solved += 1
+                priced_winners = [entry for entry in winners if sample_id in entry["costs"]]
+                if priced_winners:
+                    chosen_costs.append(min(e["costs"][sample_id] for e in priced_winners))
+                if cheapest is not None and sample_id not in cheapest["correct"]:
+                    routable += 1
+            elif cheapest is not None:
+                # Nobody solved it, so the router cannot do better than the cheapest attempt.
+                chosen_costs.append(cheapest["costs"][sample_id])
+
+        complete = bool(sample_ids) and len(chosen_costs) == len(sample_ids)
+        oracle_cost = _mean(chosen_costs) if complete else None
+        oracle_accuracy = solved / denominator if denominator else None
+
+        accuracies = [e["accuracy"] for e in pool if e["accuracy"] is not None]
+        pool_costs = [e["cost"] for e in pool if e["cost"] is not None]
+        random_accuracy = _mean(accuracies)
+        random_cost = _mean(pool_costs) if len(pool_costs) == len(pool) else None
+
+        front = pareto_front(
+            [
+                {
+                    "model": entry["model"],
+                    "cost_usd_per_sample": _r(entry["cost"], 6),
+                    "accuracy": _r(entry["accuracy"], 4),
+                }
+                for entry in pool
+                if entry["cost"] is not None and entry["accuracy"] is not None
+            ]
+        )
+
+        best_accuracy = best["accuracy"]
+        headroom_span = (
+            None
+            if oracle_accuracy is None or best_accuracy is None
+            else oracle_accuracy - best_accuracy
+        )
+
+        variants = []
+        for row in rows:
+            if row["is_fusion"] != "true":
+                continue
+            accuracy = _number(row.get("accuracy"))
+            cost = _number(row.get("cost_usd_per_sample"))
+            unusable = (
+                headroom_span is None
+                or accuracy is None
+                or best_accuracy is None
+                or abs(headroom_span) < 1e-12
+            )
+            headroom = None if unusable else (accuracy - best_accuracy) / headroom_span
+            variants.append(
+                {
+                    "model": row["model"],
+                    "label": variant_label(row["model"]),
+                    "accuracy": _r(accuracy, 4),
+                    "cost_usd_per_sample": _r(cost, 6),
+                    "cost_vs_best_single": _r(
+                        None if not cost or not best["cost"] else cost / best["cost"], 4
+                    ),
+                    "headroom_captured": _r(headroom, 4),
+                    "headroom_is_empty": headroom_span is not None and abs(headroom_span) < 1e-12,
+                    "gap_to_oracle_pp": _r(
+                        None
+                        if accuracy is None or oracle_accuracy is None
+                        else (oracle_accuracy - accuracy) * 100,
+                        2,
+                    ),
+                    "above_random_mix": classify_vs_mix(front, cost, accuracy),
+                }
+            )
+
+        result[benchmark] = {
+            "benchmark_label": BENCHMARK_LABELS.get(benchmark, benchmark),
+            "pool": [entry["model"] for entry in pool],
+            "n_planned": denominator,
+            "best_single": {
+                "model": best["model"],
+                **_baseline_entry(variant_label(best["model"]), best["accuracy"], best["cost"]),
+            },
+            "oracle": {
+                **_baseline_entry(BASELINE_LABELS["oracle"], oracle_accuracy, oracle_cost),
+                "routable_share": _r(routable / denominator if denominator else None, 4),
+                "unsolved_share": _r(
+                    (denominator - solved) / denominator if denominator else None, 4
+                ),
+            },
+            "random_uniform": _baseline_entry(
+                BASELINE_LABELS["random"], random_accuracy, random_cost
+            ),
+            "pareto_front": front,
+            "variants": variants,
+            "cost_fallback_samples": {
+                "total": sum(fallback_by_model.values()),
+                "by_model": fallback_by_model,
+            },
+            "cost_fallback_note": COST_FALLBACK_NOTE,
+        }
+    return result
+
+
+def baseline_csv_rows(baselines: dict[str, dict]) -> list[dict]:
+    """`baseline:*` rows for report.csv: accuracy and cost/sample filled, everything else empty."""
+    rows: list[dict] = []
+    for benchmark in sorted(baselines, key=lambda name: _sort_key((name, ""))):
+        block = baselines[benchmark]
+        for key in ("best_single", "oracle", "random"):
+            source = block["random_uniform"] if key == "random" else block[key]
+            accuracy = source.get("accuracy")
+            cost = source.get("cost_usd_per_sample")
+            row = dict.fromkeys(REPORT_FIELDS, "")
+            row.update(
+                {
+                    "benchmark": benchmark,
+                    "benchmark_label": block["benchmark_label"],
+                    "model": BASELINE_CSV_MODELS[key],
+                    "variant_label": BASELINE_LABELS[key],
+                    "accuracy": "" if accuracy is None else accuracy,
+                    "cost_usd_per_sample": "" if cost is None else cost,
+                }
+            )
+            rows.append(row)
+    return rows
+
+
 # --------------------------------------------------------------------------- HTML rendering
 
 PALETTE = {
@@ -644,8 +979,13 @@ def _svg_text(
 
 
 def _text_width(text: str, size: int = 12) -> float:
-    """Rough glyph-width estimate for ASCII labels in a system-ui sans-serif at `size`."""
-    return len(text) * size * 0.58
+    """Rough glyph-width estimate in a system-ui sans-serif at `size`.
+
+    CJK glyphs and full-width punctuation are roughly square, so they count as a full em; Latin
+    averages about 0.58 em. The baseline labels mix both, and treating them as all Latin would
+    under-measure the box and let the collision pass overlap them.
+    """
+    return sum(size * (1.0 if ord(char) > 0x2E80 else 0.58) for char in text)
 
 
 def _boxes_overlap(
@@ -700,8 +1040,36 @@ def _place_labels(
     return results  # type: ignore[return-value]
 
 
-def scatter_svg(rows: list[dict]) -> str:
-    """Quality vs cost: x = settled cost per sample, y = accuracy with Wilson bars."""
+def _star_path(cx: float, cy: float, outer: float = 9.0, inner: float = 4.0) -> str:
+    """Five-pointed star centred on (cx, cy); shape carries the Oracle identity, not color."""
+    coords = []
+    for index in range(10):
+        radius = outer if index % 2 == 0 else inner
+        angle = -math.pi / 2 + index * math.pi / 5
+        coords.append(f"{cx + radius * math.cos(angle):.1f},{cy + radius * math.sin(angle):.1f}")
+    return "M" + "L".join(coords) + "Z"
+
+
+LEGEND_GLYPHS = {
+    "oracle": '<svg width="14" height="14" viewBox="-8 -8 16 16" style="vertical-align:-2px">'
+    f'<path d="{_star_path(0, 0, 7.0, 3.1)}" fill="var(--text-secondary)"/></svg>',
+    "random": '<svg width="12" height="12" viewBox="-6 -6 12 12" style="vertical-align:-1px">'
+    '<rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--muted)"/></svg>',
+    "mix": '<svg width="22" height="10" viewBox="0 0 22 10" style="vertical-align:-1px">'
+    '<line x1="1" y1="5" x2="21" y2="5" stroke="var(--muted)" stroke-width="2" '
+    'stroke-dasharray="5 4" stroke-linecap="round"/></svg>',
+    "best": '<svg width="16" height="16" viewBox="-9 -9 18 18" style="vertical-align:-3px">'
+    '<circle r="7.5" fill="none" stroke="var(--text-secondary)" stroke-width="1.5"/></svg>',
+}
+
+
+def scatter_svg(rows: list[dict], baseline: dict | None = None) -> str:
+    """Quality vs cost: x = settled cost per sample, y = accuracy with Wilson bars.
+
+    With `baseline` the plot also carries the router-evaluation reference marks: a ring around
+    the BestSingle point, an Oracle star, a Random-uniform square, and the dashed
+    input-agnostic random-mix line through the fixed models' Pareto front.
+    """
     points = [
         row
         for row in rows
@@ -713,7 +1081,13 @@ def scatter_svg(rows: list[dict]) -> str:
     width, height = 760, 380
     # top has extra headroom for the y-axis title so it never sits under the "100%" tick label.
     left, right, top, bottom = 70, 190, 40, 56
-    costs = [_number(row["cost_usd_per_sample"]) for row in points]
+    overlay_costs = []
+    if baseline:
+        for block in (baseline["oracle"], baseline["random_uniform"]):
+            value = _number(block.get("cost_usd_per_sample"))
+            if value is not None:
+                overlay_costs.append(value)
+    costs = [_number(row["cost_usd_per_sample"]) for row in points] + overlay_costs
     low, high = min(costs), max(costs)
     use_log = low > 0 and high / low > 20
     pad = 1.35 if use_log else 1.0
@@ -769,7 +1143,24 @@ def scatter_svg(rows: list[dict]) -> str:
     # with the "100%" tick text.
     parts.append(_svg_text(left, 16, "准确率", fill="var(--text-secondary)", anchor="start"))
 
+    # Input-agnostic random-mix line: the polyline through the fixed models' Pareto front is
+    # exactly what a router that ignores the question can reach by mixing two of them.
+    front = (baseline or {}).get("pareto_front") or []
+    if len(front) >= 2:
+        path = " ".join(
+            f"{x_axis.to_pixel(_number(p['cost_usd_per_sample'])):.1f},"
+            f"{y_axis.to_pixel(_number(p['accuracy'])):.1f}"
+            for p in front
+        )
+        parts.append("<g><title>随机混合线（输入无关路由的上界）</title>")
+        parts.append(
+            f'<polyline points="{path}" fill="none" stroke="var(--muted)" stroke-width="2" '
+            f'stroke-dasharray="6 5" stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+        parts.append("</g>")
+
     point_meta = []
+    best_model = ((baseline or {}).get("best_single") or {}).get("model")
     for row in points:
         fusion = row["is_fusion"] == "true"
         color = "var(--fusion)" if fusion else "var(--fixed)"
@@ -798,8 +1189,44 @@ def scatter_svg(rows: list[dict]) -> str:
                 f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="var(--surface)" '
                 f'stroke="{color}" stroke-width="2.5"/>'
             )
+        label = variant_label(row["model"])
+        if best_model and row["model"] == best_model:
+            parts.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="11" fill="none" '
+                f'stroke="var(--text-secondary)" stroke-width="1.5"/>'
+            )
+            label = f"{label}（BestSingle）"
         parts.append("</g>")
-        point_meta.append({"x": x, "y": y, "label": variant_label(row["model"])})
+        point_meta.append({"x": x, "y": y, "label": label})
+
+    # Oracle and Random-uniform ride the same label-collision pass as the model points, so the
+    # new marks never overprint an existing label.
+    overlays = [
+        ("oracle", baseline.get("oracle") if baseline else None, "Oracle（理论上界）"),
+        ("random", baseline.get("random_uniform") if baseline else None, "随机（均匀）"),
+    ]
+    for kind, block, text in overlays:
+        if not block:
+            continue
+        cost = _number(block.get("cost_usd_per_sample"))
+        accuracy = _number(block.get("accuracy"))
+        if cost is None or accuracy is None:
+            continue
+        ox, oy = x_axis.to_pixel(cost), y_axis.to_pixel(accuracy)
+        tip = f"{text}｜准确率 {fmt_pct(accuracy)}｜每题 {fmt_money(cost)}"
+        parts.append(f"<g><title>{esc(tip)}</title>")
+        if kind == "oracle":
+            parts.append(
+                f'<path d="{_star_path(ox, oy, 9.5, 4.2)}" fill="var(--text-secondary)" '
+                f'stroke="var(--surface)" stroke-width="2"/>'
+            )
+        else:
+            parts.append(
+                f'<rect x="{ox - 4.5:.1f}" y="{oy - 4.5:.1f}" width="9" height="9" rx="1.5" '
+                f'fill="var(--muted)" stroke="var(--surface)" stroke-width="2"/>'
+            )
+        parts.append("</g>")
+        point_meta.append({"x": ox, "y": oy, "label": text})
 
     # Label placement pass: sort by x, alternate above/below in fixed steps on collision, and
     # draw a thin leader line whenever a label had to move away from its natural spot.
@@ -999,7 +1426,105 @@ def _comparison_table(rows: list[dict], baselines: list[str]) -> str:
     return f"<table><thead>{head}</thead><tbody>{''.join(body_rows)}</tbody></table>"
 
 
-def render_html(rows: list[dict], meta: dict) -> str:
+def _baseline_table(block: dict) -> str:
+    """One benchmark: BestSingle / Oracle / Random / each Fusion variant, one row each."""
+    front = block.get("pareto_front") or []
+    best, oracle = block["best_single"], block["oracle"]
+    best_accuracy = _number(best.get("accuracy"))
+    best_cost = _number(best.get("cost_usd_per_sample"))
+    oracle_accuracy = _number(oracle.get("accuracy"))
+    span = (
+        None
+        if oracle_accuracy is None or best_accuracy is None
+        else oracle_accuracy - best_accuracy
+    )
+
+    def headroom_cell(accuracy: float | None) -> str:
+        if span is None or accuracy is None or best_accuracy is None:
+            return "—"
+        if abs(span) < 1e-12:
+            return "无空间"
+        return f"{(accuracy - best_accuracy) / span * 100:.0f}%"
+
+    def cost_cell(cost: float | None) -> str:
+        return "—" if not cost or not best_cost else f"{cost / best_cost:.2f}×"
+
+    entries = [
+        (f"BestSingle：{best.get('label', best.get('model', ''))}", best_accuracy, best_cost),
+        (BASELINE_LABELS["oracle"], oracle_accuracy, _number(oracle.get("cost_usd_per_sample"))),
+        (
+            BASELINE_LABELS["random"],
+            _number(block["random_uniform"].get("accuracy")),
+            _number(block["random_uniform"].get("cost_usd_per_sample")),
+        ),
+    ]
+    body = []
+    for label, accuracy, cost in entries:
+        body.append(
+            f"<tr><td>{esc(label)}</td><td>{fmt_pct(accuracy)}</td>"
+            f"<td>{fmt_money(cost)}</td><td>{esc(cost_cell(cost))}</td>"
+            f"<td>{esc(headroom_cell(accuracy))}</td>"
+            f"<td>{esc(classify_vs_mix(front, cost, accuracy))}</td></tr>"
+        )
+    for variant in block.get("variants", []):
+        accuracy = _number(variant.get("accuracy"))
+        cost = _number(variant.get("cost_usd_per_sample"))
+        headroom = "无空间" if variant.get("headroom_is_empty") else headroom_cell(accuracy)
+        gap = variant.get("gap_to_oracle_pp")
+        gap_text = "" if gap is None else f"（距 Oracle {gap:+.0f} 个百分点）"
+        body.append(
+            f'<tr class="fusion"><td><span class="swatch fusion"></span>'
+            f"{esc(variant['label'])}{esc(gap_text)}</td>"
+            f"<td>{fmt_pct(accuracy)}</td><td>{fmt_money(cost)}</td>"
+            f"<td>{esc(cost_cell(cost))}</td><td>{esc(headroom)}</td>"
+            f"<td>{esc(variant.get('above_random_mix', '—'))}</td></tr>"
+        )
+    head = (
+        "<tr><th>变体</th><th>准确率</th><th>每题成本</th><th>相对 BestSingle 成本</th>"
+        "<th>吃掉的 Oracle 空间</th><th>是否高于随机混合线</th></tr>"
+    )
+    return f"<table><thead>{head}</thead><tbody>{''.join(body)}</tbody></table>"
+
+
+def _baseline_section(baselines: dict[str, dict]) -> list[str]:
+    """The 路由基线对比 block: explanation, per-benchmark shares, one table per benchmark."""
+    if not baselines:
+        return []
+    parts = [
+        "<h2>路由基线对比</h2>",
+        '<section class="card">',
+        '<p class="note">BestSingle 是本赛道准确率最高的固定模型（并列时取更便宜的那个），'
+        "代表不做路由、全程只用一个模型。</p>",
+        '<p class="note">Oracle 是逐题挑出答对且最便宜的固定模型，是任何路由器的理论上界；'
+        "Random 是逐题在固定模型里均匀随机挑一个。</p>",
+        '<p class="note">路由器至少要压过随机混合线，才谈得上会选模型。</p>',
+        '<p class="note">候选池只含固定模型（Fusion 变体不作自己的基线）；'
+        "出错和无分的题一律算答错，分母仍是计划题数。"
+        f"{esc(COST_FALLBACK_NOTE)}</p>",
+    ]
+    for benchmark in sorted(baselines, key=lambda name: _sort_key((name, ""))):
+        block = baselines[benchmark]
+        fallback = (block.get("cost_fallback_samples") or {}).get("total", 0)
+        parts.append(f"<h3>{esc(block['benchmark_label'])}</h3>")
+        parts.append(
+            '<p class="kv">可路由题占比 <b>'
+            f"{fmt_pct(block['oracle'].get('routable_share'))}</b>"
+            "｜无人答对占比 <b>"
+            f"{fmt_pct(block['oracle'].get('unsolved_share'))}</b>"
+            f"｜回退到运行平均成本的逐题记录 <b>{esc(fallback)}</b> 条</p>"
+        )
+        parts.append('<p class="note">可路由题越少，这套题越看不出路由能力。</p>')
+        if len(block.get("pareto_front") or []) < 2:
+            parts.append(
+                '<p class="note">本赛道的帕累托前沿只有一个点（最便宜的固定模型同时也最准），'
+                "随机混合线退化成这一个点，散点图里不画虚线，判定仍按该点比较。</p>"
+            )
+        parts.append(_baseline_table(block))
+    parts.append("</section>")
+    return parts
+
+
+def render_html(rows: list[dict], meta: dict, baselines: dict[str, dict] | None = None) -> str:
     benchmarks: dict[str, list[dict]] = {}
     for row in rows:
         benchmarks.setdefault(row["benchmark"], []).append(row)
@@ -1017,8 +1542,13 @@ def render_html(rows: list[dict], meta: dict) -> str:
         "每格样本量很小，差异只作描述，不作结论。</p>",
         '<div class="legend">'
         '<span><span class="swatch fusion"></span>Fusion 路由（实心）</span>'
-        '<span><span class="swatch fixed"></span>固定模型（空心）</span></div>',
+        '<span><span class="swatch fixed"></span>固定模型（空心）</span>'
+        f"<span>{LEGEND_GLYPHS['best']} BestSingle</span>"
+        f"<span>{LEGEND_GLYPHS['oracle']} Oracle（理论上界）</span>"
+        f"<span>{LEGEND_GLYPHS['random']} 随机（均匀）</span>"
+        f"<span>{LEGEND_GLYPHS['mix']} 随机混合线</span></div>",
     ]
+    baselines = baselines or {}
 
     for benchmark in sorted(benchmarks, key=lambda name: _sort_key((name, ""))):
         group = benchmarks[benchmark]
@@ -1027,7 +1557,7 @@ def render_html(rows: list[dict], meta: dict) -> str:
         parts.append('<section class="card">')
         parts.append("<h3>越靠左上越好：便宜且答得准</h3>")
         parts.append('<p class="note">竖线是 95% 置信区间，n=10 时区间很宽，属正常。</p>')
-        parts.append(scatter_svg(group))
+        parts.append(scatter_svg(group, baselines.get(benchmark)))
         parts.append(_table(group))
         price_table = _price_table(group)
         if price_table:
@@ -1038,6 +1568,8 @@ def render_html(rows: list[dict], meta: dict) -> str:
             )
             parts.append(price_table)
         parts.append("</section>")
+
+    parts.extend(_baseline_section(baselines))
 
     parts.append("<h2>耗时对比</h2>")
     parts.append(
@@ -1072,7 +1604,9 @@ def render_html(rows: list[dict], meta: dict) -> str:
     )
     for benchmark in sorted(benchmarks, key=lambda name: _sort_key((name, ""))):
         group = benchmarks[benchmark]
-        table = _comparison_table(group, ["gpt-6-astra", "gpt-5.6-sol", "claude-sonnet-5", "claude-opus-5"])
+        table = _comparison_table(
+            group, ["gpt-6-astra", "gpt-5.6-sol", "claude-sonnet-5", "claude-opus-5"]
+        )
         if table:
             parts.append(f"<h3>{esc(group[0]['benchmark_label'])}</h3>")
             parts.append(table)
@@ -1135,14 +1669,17 @@ def main(argv: list[str] | None = None) -> int:
         sample_rows, runs, entries, prices, tail_seconds=args.tail_seconds
     )
 
+    baselines = compute_baselines(report, detailed)
+
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "runs.jsonl").write_text(
         "".join(json.dumps(run, ensure_ascii=False) + "\n" for run in runs), encoding="utf-8"
     )
     (args.out / "report.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps({"rows": report, "baselines": baselines}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
-    write_csv(args.out / "report.csv", report, REPORT_FIELDS)
+    write_csv(args.out / "report.csv", [*report, *baseline_csv_rows(baselines)], REPORT_FIELDS)
     write_csv(
         args.out / "samples.csv",
         detailed,
@@ -1157,7 +1694,7 @@ def main(argv: list[str] | None = None) -> int:
         "samples_per_cell": max((row["n_planned"] for row in report), default=0),
         "n_cells": len(report),
     }
-    (args.out / "report.html").write_text(render_html(report, meta), encoding="utf-8")
+    (args.out / "report.html").write_text(render_html(report, meta, baselines), encoding="utf-8")
     print(f"{len(report)} rows, {len(detailed)} samples -> {args.out / 'report.html'}")
     return 0
 

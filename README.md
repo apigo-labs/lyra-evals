@@ -163,10 +163,17 @@ make inspect-report LOGS=.local/inspect-logs/main PLATFORM=.local/platform-logs.
 ```
 
 `scripts/inspect_report.py` 读取一个运行集的 `.eval` 日志，逐题行复用 `scripts/inspect_summary.py`，运行窗口由
-`inspect log dump --header-only` 就地提取（不再需要手工生成 runs.jsonl），输出到 `OUT`：`report.json`、`report.csv`
+`inspect log dump --header-only` 就地提取（不再需要手工生成 runs.jsonl），输出到 `OUT`：`report.json`（`{rows, baselines}`）、`report.csv`
 （每个「赛道 × 变体」一行，含准确率与 Wilson 95% 区间、结算成本、每题与每答对成本、p50/p95/均值耗时、逐题 token、
 Lyra 路由分布）、`samples.csv`（逐题行 + 按时长近似匹配的逐题成本）和自包含的 `report.html`（内联样式、Python 手绘
 SVG，离线可开）。
+
+报告同时给出路由评测的标准基线（LLMRouterBench / RouterBench / Google Universal Model Routing 口径）：
+BestSingle（准确率最高的固定模型，并列取更便宜者）、Oracle（逐题挑答对且最便宜的固定模型，理论上界）、
+Random（逐题均匀随机挑一个固定模型），以及固定模型帕累托前沿连成的「随机混合线」；候选池只含固定模型，
+Fusion 变体不作自己的基线。`report.json` 里每个赛道多一个 `baselines` 块（含可路由题占比、无人答对占比、
+吃掉的 Oracle 空间与逐题成本回退计数），`report.csv` 多出 `baseline:best_single` / `baseline:oracle` /
+`baseline:random` 三行。
 
 成本口径：Platform 把每个 Gateway 请求记为独立账单行，`apigo/lyra-*` 路由本身就是一条账单行并已含其内部调用，
 不需要再求和；Inspect 日志里没有 Gateway 请求 id，因此按「模型 + 运行时间窗」归集——模型等于该变体、时间落在

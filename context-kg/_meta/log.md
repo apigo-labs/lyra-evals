@@ -2,11 +2,20 @@
 title: VOHU Evals Context-KG 变更日志
 tags: [meta, log]
 links: []
-updated: 2026-09-12
+updated: 2026-09-13
 sources: 0
 ---
 
 # VOHU Evals Context-KG 变更日志
+
+## [2026-09-13] change | 对比报告加入路由评测标准基线
+
+- `scripts/inspect_report.py` 按赛道计算 BestSingle / Oracle / Random（均匀）三条基线与固定模型帕累托前沿
+  连成的随机混合线；候选池只含固定模型，出错与无分的题算答错，分母仍是计划题数。
+- 附带口径：可路由题占比、无人答对占比、各 Fusion 变体吃掉的 Oracle 空间、相对 BestSingle 的成本比，
+  以及逐题成本匹配不上时回退到该模型运行平均每题成本的回退计数。
+- 散点图增加 BestSingle 高亮圈、Oracle 星形、Random 灰色方块与随机混合虚线，图例同步；新增「路由基线对比」
+  表格区块。`report.json` 改为 `{rows, baselines}`，`report.csv` 增加 `baseline:*` 行。
 
 ## [2026-09-12] change | 直连剖面的成本 / 耗时 / 准确率对比报告
 
