@@ -75,3 +75,8 @@ inspect-eval:
 
 inspect-summary:
 	uv run python scripts/inspect_summary.py .local/inspect-logs/*.eval $(ARGS)
+
+.PHONY: calibration
+# Stage-4 calibration (7 variants x 3 benchmarks x 10 frozen samples) via Inspect; SET=main for the main sets.
+calibration:
+	scripts/run_calibration.sh
