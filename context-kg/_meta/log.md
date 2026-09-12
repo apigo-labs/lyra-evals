@@ -8,6 +8,12 @@ sources: 0
 
 # VOHU Evals Context-KG 变更日志
 
+## [2026-09-12] decision | Lyra 协议实测与直连剖面复用 Inspect
+
+- 逐协议实测：Lyra 三个路由只接受 OpenAI Chat Completions，Messages / Responses 返回 400 或 502；Console 中 Lyra 目标协议改为 `openai_chat_completions`。
+- 直连 API 剖面不自写 harness，复用 Inspect AI `openai-api` 提供者与 inspect_evals 官方 `ifeval`、`gpqa_diamond`；新增独立环境包装脚本与日志汇总脚本。
+- Lyra usage 含路由开销、响应 `lyra` 字段含路由证据与 execution id；推理模型输出上限须含推理 token。
+
 ## [2026-09-12] fix | GPQA 真实 ACP 从不出分：工具调用循环而非解析器
 
 - 诊断真实 ACP 小样本验收里的 GPQA episode 证据：多起 `system_failed`（TimeoutError / episode budget exhausted / Agent 未正常完成回答）均在请求级 usage 里带有 `response.custom_tool_call_input.*` 事件，说明模型在几乎每轮响应都尝试发起工具调用，但该赛道不提供工具结果，Agent 因此反复重试、跨多次请求耗尽 deadline 或预算，从未产出可解析文本；唯一评出分的样本文本能被既有严格解析器正确抽取，只是答案本身错——解析器不是根因。

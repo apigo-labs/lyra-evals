@@ -129,3 +129,19 @@ Console「结果与导出」集中查看成本、单题耗时、准确率、Harn
 构建 `make console-gateway-image` 后，可在冻结计划中授权预算并运行 IFEval、GPQA、LiveCodeBench。控制器要求所有单题预算之和不超过实验授权，冻结官方数据/镜像/价格上界，并通过每题专属转发器只访问 APIGO。τ² 和 SWE 的完整 Agent 交互仍未开放；最终账单自动对账尚未接通。
 
 离线出口策略测试：`node --test deploy/console/gateway/policy.test.mjs`。普通测试不产生模型调用。
+
+### 直连 API 剖面（Inspect AI）
+
+Fusion 路由 `apigo/lyra-*` 只接受 OpenAI Chat Completions，无法由 Claude Agent / Codex ACP 驱动。路演设计中的直连剖面复用 Inspect AI，
+不在 Console 内另写 harness：
+
+```bash
+make inspect-eval TASK=inspect_evals/ifeval MODEL=apigo/lyra-auto ARGS="--limit 10 --max-tokens 8192"
+make inspect-eval TASK=inspect_evals/gpqa_diamond MODEL=gpt-5.6-luna ARGS="--reasoning-effort high --limit 10 --max-tokens 16384"
+make inspect-summary ARGS="--csv .local/inspect-summary.csv"
+```
+
+包装脚本在 `uvx` 独立环境中固定 inspect-ai 与 inspect-evals 版本，凭据从 `.env` 的 `VOHU_EVALS_API_KEY` 映射，日志写入
+`.local/inspect-logs`。汇总脚本导出逐题用量、耗时、响应 id 与 Lyra 路由字段（路由到的模型、难度、任务类型）。Lyra 的
+usage 含内部路由开销，输出上限只是预留边界；账单以 execution id 对账为准。LiveCodeBench release_v6 不在 inspect_evals 中，
+仍使用本仓库冻结题库与断网评分镜像。`scripts/probe_lyra_protocols.py` 可在冻结计划前用最小请求确认任意模型的协议。

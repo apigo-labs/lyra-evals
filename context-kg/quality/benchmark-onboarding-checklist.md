@@ -45,26 +45,25 @@ Claude Code 是执行程序；Claude 模型只是可能的被测目标之一。�
 - 协议适配应尽可能保持消息、工具和错误语义；为不同模型添加的提示、修复或功能降级必须进入 manifest。结果解释为“Claude Code + 适配层 + 被测目标”的表现。
 - 保留官方 evaluator 不自动保留官方成绩可比性。统一标明 Claude Code 版本、profile、任务预算与差异；外部榜单可比性逐赛道核验。
 
-### Lyra 路由模型的 Anthropic Messages 入口约束
+### Lyra 路由模型只接受 OpenAI Chat Completions
 
-Lyra 路由目标（`apigo/lyra-*`）与直连单模型共用 `/v1/messages` 路由，但入口只接受该协议的子集，且不同路由档位接受范围不一致。实测证据：同一 Claude Agent ACP 与同一转发器下，直连 Claude 模型全部正常返回；三个 Lyra 目标全部返回 HTTP 400，其中一个档位报告"native text parameter unsupported"，另两个档位报告"protocol unsupported"，即后者根本不接受 Anthropic Messages 协议。
+用最小请求（16 token）对三个 Lyra 路由目标逐协议实测（`scripts/probe_lyra_protocols.py`）：
 
-Gateway 开源代码不包含这些校验：Lyra 内部路由已从公开 Gateway 中移除（私有 `--lyra.*` 启动参数被显式拒绝，`/inner/v1/lyra/*` 路由在鉴权前返回 404），因此拒绝规则来自闭源组件，无法从代码确认具体参数名。最接近的公开校验是 Gateway 对 WebSearch 工具声明的形状检查，它拒绝的是工具数组而非文本参数。
-
-转发器（`deploy/console/gateway/policy.mjs`）对 `apigo/lyra-` 开头且路径为 `/v1/messages` 的目标应用固定规则：
-
-| 参数 | 处理 | 是否影响评测语义 |
+| 协议 | lyra-auto | lyra-budget / lyra-quality |
 |---|---|---|
-| `metadata` | 删除 | 否，仅为调用方标签 |
-| `context_management` | 删除 | 否，单轮闭卷任务不触发压缩 |
-| `cache_control`（递归，含 system 与 message 内容块） | 删除 | 否，仅影响缓存与计费 |
-| `system` 为全 `text` 块数组 | 按原顺序以空行连接为字符串 | 否，逐字保留提示内容 |
-| `system` 含非文本块 | 转发器返回 4xx 并拒绝请求 | 是，禁止静默改写评测输入 |
-| `max_tokens`、`thinking`、`stream`、消息内容 | 原样透传 | 是，不允许降级 |
+| `/v1/chat/completions` | 200，正常回答，返回 usage | 200，正常回答，返回 usage |
+| `/v1/messages` | 502 `Lyra execution failed` | 400 `Lyra protocol unsupported` |
+| `/v1/responses` | 502 `Lyra execution failed` | 400 `Lyra protocol unsupported` |
 
-转发器逐请求在账本中记录 `normalized`（实际应用的规则名）与 `outbound`（仅键名与结构的请求形状，所有字符串值替换为长度占位，不写入提示文本、请求头或凭据），用于把 Gateway 的拒绝归因到具体参数。规划阶段对 `apigo/lyra-*` + `anthropic_messages` 的组合追加 blocker，要求先做单题入口预检再展开付费批次。
+结论：Lyra 目标不能由 Claude Agent ACP（只发 Messages）或 Codex ACP（只发 Responses）驱动；转发器对 Messages 请求体做的参数剥离不解决问题，仅保留为出站形状记录。Lyra 目标在 Console 中的协议应为 `openai_chat_completions`。
 
-上述规则尚未在 Lyra 入口实测通过；在预检成功前不应把 Lyra 目标计入横向成绩。
+两个计费口径差异必须记录：Lyra 返回的 usage 含内部路由开销（极短提示的 prompt_tokens 达数百，回复 "OK" 的 completion_tokens 远超请求的 max_tokens），因此外层输出上限只是预留边界，不是账单边界；Chat Completions 响应附带 `lyra` 字段，含 router/answer 参与模型、难度判定、任务类型、policy 版本与 execution id，是路由证据的权威来源，也是账单对账的请求标识。
+
+### 直连 API 剖面复用 Inspect AI
+
+直连单轮、无工具的剖面不自行实现 harness，复用 Inspect AI 的 `openai-api/<provider>/<model>` 提供者与 inspect_evals 官方任务（`ifeval`、`gpqa_diamond`，均使用官方评分器；`gpqa_diamond` 默认 4 个 epoch，横向比较必须显式单 epoch）。入口为 `scripts/inspect_eval.sh`，在 `uvx` 独立环境中固定 inspect-ai / inspect-evals 版本；独立环境的原因是 inspect_evals 的 IFEval 评分器依赖的 `instruction_following_eval` 分支与本仓库冻结的 Google 原版同名。`scripts/inspect_summary.py` 把 `.eval` 日志展平为逐题用量、耗时、响应 id 与 Lyra 路由字段，不导出提示词、回答或凭据。
+
+已验证：三个 Lyra 目标与 gpt-5.6-luna（`--reasoning-effort high` 序列化为请求体 `reasoning_effort`）均能完成单题。推理模型的 `max_tokens` 含推理 token，2048 会被推理耗尽而零分；按设计取 IFEval 8192、GPQA 16384。inspect_evals 未提供 LiveCodeBench release_v6，该赛道仍走本仓库冻结题库与断网评分镜像，或另写 Inspect Task 包装。IFEval 评分器首次运行需下载 NLTK punkt 数据，离线环境需预先放置。
 
 HLE、BrowseComp、DRACO、FRAMES 不进入本轮建设范围；既有插件和历史协议保留，不删除。
 

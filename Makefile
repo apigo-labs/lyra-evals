@@ -66,3 +66,12 @@ benchmark-tau-image:
 
 benchmark-tau-check:
 	uv run --extra console python scripts/verify_tau_runtime.py
+
+.PHONY: inspect-eval inspect-summary
+# Direct-api profile via Inspect AI in an isolated tool env. Example:
+#   make inspect-eval TASK=inspect_evals/ifeval MODEL=apigo/lyra-auto ARGS="--limit 10"
+inspect-eval:
+	scripts/inspect_eval.sh $(TASK) $(MODEL) $(ARGS)
+
+inspect-summary:
+	uv run python scripts/inspect_summary.py .local/inspect-logs/*.eval $(ARGS)
