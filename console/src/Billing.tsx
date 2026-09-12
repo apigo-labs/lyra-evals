@@ -14,9 +14,8 @@ export function Billing() {
       ),
     refetchInterval: 15000,
   });
-  const [open, setOpen] = useState(false),
-    [message, setMessage] = useState(""),
-    [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   return (
     <section className="rounded-xl border bg-white p-4 text-xs">
       <div className="flex flex-wrap items-center gap-3">
@@ -24,11 +23,8 @@ export function Billing() {
           实际账单：
           {status.data?.configured
             ? "已配置，每分钟自动同步"
-            : "未配置平台访问权限"}
+            : "未配置平台访问凭据"}
         </span>
-        <Button variant="outline" onClick={() => setOpen(!open)}>
-          配置账单连接
-        </Button>
         <Button
           variant="outline"
           disabled={!status.data?.configured || busy}
@@ -57,60 +53,12 @@ export function Billing() {
           同步账单
         </Button>
       </div>
-      {open && (
-        <form
-          className="mt-4 flex flex-wrap gap-3"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const form = e.currentTarget;
-            const fields = new FormData(form);
-            setBusy(true);
-            try {
-              await api(
-                "/billing/config",
-                z.object({ configured: z.boolean() }),
-                {
-                  method: "POST",
-                  body: JSON.stringify({
-                    workspace_id: fields.get("workspace"),
-                    token: fields.get("token"),
-                  }),
-                },
-              );
-              form.reset();
-              setOpen(false);
-              setMessage("已保存至本地私密目录");
-              void client.invalidateQueries({ queryKey: ["billing"] });
-            } catch (e) {
-              setMessage(e instanceof Error ? e.message : "保存失败");
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <input
-            className="rounded border p-2"
-            aria-label="Workspace ID"
-            name="workspace"
-            placeholder="Workspace ID"
-            required
-          />
-          <input
-            className="rounded border p-2"
-            aria-label="平台访问令牌"
-            name="token"
-            type="password"
-            autoComplete="off"
-            placeholder="平台访问令牌（不是模型 API Key）"
-            required
-          />
-          <Button disabled={busy}>保存连接</Button>
-          <p className="w-full text-neutral-500">
-            只访问 APIGO
-            平台账单接口。令牌仅在本地服务端保存，不回显、不进入导出；到期后需更新。
-          </p>
-        </form>
-      )}
+      <p className="mt-3 text-neutral-500">
+        平台访问凭据（VOHU_EVALS_PLATFORM_BASE_URL / VOHU_EVALS_WORKSPACE_ID /
+        VOHU_EVALS_PLATFORM_TOKEN 或 VOHU_USER_EMAIL /
+        VOHU_USER_PASSWORD）只在本地 .env 中配置，与 CLI 共用；令牌过期时服务端会自动
+        登录刷新。此处仅显示状态，不接受输入。
+      </p>
       {(message || status.data?.error) && (
         <p role="status" className="mt-3">
           {message || status.data?.error}

@@ -10,19 +10,28 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from vohu_evals.console.billing import BillingConfig, billing_loop, reconcile, save_config
+from vohu_evals.console.billing import billing_configured, billing_loop, reconcile
 from vohu_evals.console.contracts import BENCHMARKS, PriceCap, RunInput, TargetInput
 from vohu_evals.console.planner import PlanInput, build_plan, capabilities
 from vohu_evals.console.preparation import Preparations
 from vohu_evals.console.results import csv_export, episode_rows, result_rows
 from vohu_evals.console.scheduler import Scheduler
 from vohu_evals.console.store import Store
+from vohu_evals.platform_auth import load_local_env
 from vohu_evals.suites.registry import suite_status
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def create_app(data_root: Path | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Credentials live in the repo-root .env, same variables as the CLI (see
+        # platform_auth.load_local_env); an explicit override lets tests and the
+        # CLI point at a different file without mutating the process environment.
+        env_path = Path(os.environ.get("VOHU_EVALS_ENV_FILE", str(REPO_ROOT / ".env")))
+        load_local_env(env_path)
+        app.state.env_path = env_path
         app.state.store = Store(
             data_root or Path(os.environ.get("LYRA_CONSOLE_DATA", ".local/console"))
         )
@@ -100,14 +109,9 @@ def create_app(data_root: Path | None = None) -> FastAPI:
     @app.get("/api/billing")
     async def billing_status():
         return {
-            "configured": (app.state.store.secrets / "platform-billing.json").exists(),
+            "configured": billing_configured(),
             "error": app.state.scheduler.billing_error,
         }
-
-    @app.post("/api/billing/config")
-    async def configure_billing(data: BillingConfig):
-        save_config(app.state.store, data)
-        return {"configured": True}
 
     @app.post("/api/billing/reconcile")
     async def reconcile_billing():

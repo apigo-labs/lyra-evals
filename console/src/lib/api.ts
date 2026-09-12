@@ -13,11 +13,8 @@ export const targetInput = z.object({
     "openai_chat_completions",
     "openai_responses",
   ]),
-  api_key: z.string().min(1, "请输入 API Key"),
 });
-export const targetSchema = targetInput
-  .omit({ api_key: true })
-  .extend({ id: z.string(), has_key: z.boolean() });
+export const targetSchema = targetInput.extend({ id: z.string() });
 export type Target = z.infer<typeof targetSchema>;
 export const benchmarkSchema = z.object({
   id: z.string(),

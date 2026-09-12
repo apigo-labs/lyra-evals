@@ -89,6 +89,10 @@ class PlatformCredentialManager:
         self._env_path = env_path
         self._clock = clock
 
+    @property
+    def base_url(self) -> str:
+        return str(self._client.base_url).rstrip("/")
+
     def ensure_fresh(self, *, force: bool = False) -> str:
         if not force and jwt_is_fresh(self._token, now=self._clock()):
             return str(self._token)

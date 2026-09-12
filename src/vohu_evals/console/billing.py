@@ -7,26 +7,39 @@ import json
 import os
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+
+from vohu_evals.platform_auth import PlatformAuthError, PlatformCredentialManager, jwt_is_fresh
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-class BillingConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    workspace_id: str = Field(min_length=1, max_length=100)
-    token: str = Field(min_length=10, max_length=20000, repr=False)
+def billing_configured() -> bool:
+    """Whether enough environment is present to attempt platform billing reconciliation."""
+    if not os.environ.get("VOHU_EVALS_PLATFORM_BASE_URL") or not os.environ.get(
+        "VOHU_EVALS_WORKSPACE_ID"
+    ):
+        return False
+    token_fresh = jwt_is_fresh(os.environ.get("VOHU_EVALS_PLATFORM_TOKEN"))
+    has_login = bool(os.environ.get("VOHU_USER_EMAIL")) and bool(
+        os.environ.get("VOHU_USER_PASSWORD")
+    )
+    return token_fresh or has_login
 
 
-def save_config(store, config: BillingConfig):
-    path = store.secrets / "platform-billing.json"
-    temporary = path.with_suffix(".tmp")
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as stream:
-        json.dump(config.model_dump(), stream)
-        stream.flush()
-        os.fsync(stream.fileno())
-    temporary.replace(path)
+def _credentials(env_path: Path | None = None) -> PlatformCredentialManager:
+    base_url = os.environ.get("VOHU_EVALS_PLATFORM_BASE_URL")
+    if not base_url:
+        raise ValueError("VOHU_EVALS_PLATFORM_BASE_URL 未配置")
+    return PlatformCredentialManager(
+        base_url,
+        os.environ.get("VOHU_EVALS_PLATFORM_TOKEN"),
+        os.environ.get("VOHU_USER_EMAIL"),
+        os.environ.get("VOHU_USER_PASSWORD"),
+        env_path or REPO_ROOT / ".env",
+    )
 
 
 def invoice(payload: dict, request_id: str, model: str) -> Decimal | None:
@@ -60,20 +73,46 @@ def aggregate_billing(job):
         job.update(cost=float(cost), cost_usd_exact=str(cost), billing_status="settled")
 
 
-async def reconcile(scheduler, *, transport=None):
-    path = scheduler.store.secrets / "platform-billing.json"
-    if not path.exists():
-        raise ValueError("请先配置平台账单访问令牌与 workspace ID；模型 API Key 无法代替")
-    config = BillingConfig.model_validate_json(path.read_text())
+async def reconcile(
+    scheduler, *, transport=None, credentials: PlatformCredentialManager | None = None
+) -> dict:
+    workspace_id = os.environ.get("VOHU_EVALS_WORKSPACE_ID")
+    if not workspace_id:
+        raise ValueError(
+            "请先配置 VOHU_EVALS_PLATFORM_BASE_URL 与 VOHU_EVALS_WORKSPACE_ID；"
+            "模型 API Key 无法代替"
+        )
+    manager = credentials or _credentials()
+    try:
+        token = manager.ensure_fresh()
+    except PlatformAuthError as exc:
+        raise ValueError(str(exc)) from exc
     updated = 0
     pending = 0
+    refreshed = False
     async with httpx.AsyncClient(
-        base_url="https://www.apigo.ai/platform/api/v1",
+        base_url=manager.base_url + "/api/v1",
         timeout=20,
         transport=transport,
-        headers={"Authorization": f"Bearer {config.token}"},
+        headers={"Authorization": f"Bearer {token}"},
         follow_redirects=False,
     ) as client:
+
+        async def get(path: str, params: dict) -> httpx.Response:
+            nonlocal token, refreshed
+            response = await client.get(path, params=params)
+            if response.status_code == 401 and not refreshed:
+                try:
+                    token = manager.ensure_fresh(force=True)
+                except PlatformAuthError as exc:
+                    raise ValueError(str(exc)) from exc
+                refreshed = True
+                client.headers["Authorization"] = f"Bearer {token}"
+                response = await client.get(path, params=params)
+            if response.status_code in {401, 403}:
+                raise ValueError("平台账单凭据失效或缺少工作区访问权限")
+            return response
+
         for run in scheduler.runs.values():
             if run.get("mode") != "live" or run["status"] in {"queued", "running"}:
                 continue
@@ -88,15 +127,13 @@ async def reconcile(scheduler, *, transport=None):
                         if not record.get("request_id") or not model:
                             pending += 1
                             continue
-                        response = await client.get(
+                        response = await get(
                             "logs/detail",
                             params={
-                                "workspace_id": config.workspace_id,
+                                "workspace_id": workspace_id,
                                 "request_id": record["request_id"],
                             },
                         )
-                        if response.status_code in {401, 403}:
-                            raise ValueError("平台账单凭据失效或缺少工作区访问权限")
                         response.raise_for_status()
                         payload = response.json()
                         if payload.get("code") == 40405:
@@ -112,10 +149,10 @@ async def reconcile(scheduler, *, transport=None):
                             # The deployed detail projection omits exact money; the list
                             # projection retains it. Never replace it with rounded floats.
                             stamp = datetime.fromisoformat(detail["time"].replace("Z", "+00:00"))
-                            listing = await client.get(
+                            listing = await get(
                                 "logs/list",
                                 params={
-                                    "workspace_id": config.workspace_id,
+                                    "workspace_id": workspace_id,
                                     "q": record["request_id"],
                                     "time": "custom",
                                     "from": (stamp - timedelta(seconds=1)).isoformat(),
@@ -152,7 +189,7 @@ async def reconcile(scheduler, *, transport=None):
 async def billing_loop(scheduler):
     while True:
         await asyncio.sleep(60)
-        if (scheduler.store.secrets / "platform-billing.json").exists():
+        if billing_configured():
             try:
                 async with scheduler.billing_lock:
                     await reconcile(scheduler)

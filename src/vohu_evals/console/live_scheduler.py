@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import re
 import time
 import uuid
@@ -28,6 +29,8 @@ def catalog():
 
 
 async def prepare(plan: dict, budget: float) -> dict:
+    if not os.environ.get("VOHU_EVALS_API_KEY"):
+        raise ValueError("VOHU_EVALS_API_KEY 未配置，无法启动真实运行")
     manifest = copy.deepcopy(plan["manifest"])
     if set(manifest["benchmarks"]) - SUPPORTED:
         raise ValueError("不支持的评测集")
@@ -204,7 +207,7 @@ async def execute(scheduler, run: dict):
                                 name,
                                 variant,
                                 prompt,
-                                scheduler.store.secrets / variant["target_id"],
+                                os.environ.get("VOHU_EVALS_API_KEY", ""),
                                 ROOT / ".local/execution",
                                 **(
                                     {

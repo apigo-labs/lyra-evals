@@ -70,6 +70,21 @@ def load_pack(root: Path, suite: str) -> tuple[dict, list[dict]]:
     return manifest, rows
 
 
+# GPQA is a closed-book knowledge/reasoning benchmark. The ACP agent surfaces tool
+# schemas (shell, browsing, etc.) by default in some harnesses; without an explicit
+# instruction the model repeatedly attempts to call them, burns the deadline/episode
+# budget across several request round-trips, and never emits a final answer. This
+# derived closed-book protocol note (本地提示为派生闭卷协议) tells the model up front
+# that no tool exists for this task and it must answer in this single response.
+GPQA_CLOSED_BOOK_PROTOCOL = (
+    "This is a closed-book, single-turn question with no tools, browsing, code "
+    "execution, or file access available or permitted. Do not attempt to call any "
+    "tool or function; answer entirely from your own knowledge in this one response. "
+    "Finish with your choice on its own final line, in plain "
+    "text with no markdown emphasis, in exactly this format: Answer: A, B, C, or D."
+)
+
+
 def gpqa_rows(path: Path, seed: int = 0) -> list[dict]:
     rows = []
     with path.open(newline="", encoding="utf-8-sig") as stream:
@@ -85,7 +100,8 @@ def gpqa_rows(path: Path, seed: int = 0) -> list[dict]:
                 + "\n".join(
                     f"{letter}. {choices[j]}" for letter, j in zip("ABCD", order, strict=True)
                 )
-                + "\n\nReturn the final choice as Answer: A, B, C, or D."
+                + "\n\n"
+                + GPQA_CLOSED_BOOK_PROTOCOL
             )
             rows.append(
                 {
@@ -99,9 +115,15 @@ def gpqa_rows(path: Path, seed: int = 0) -> list[dict]:
 
 
 def gpqa_score(answer: str, expected: str) -> dict:
-    # Accept a bare label or an explicit final line; never guess from the last prose character.
-    matches = re.findall(r"(?im)^\s*(?:answer\s*:\s*)?([ABCD])[.)]?\s*$", answer.strip())
-    explicit = re.search(r"(?i)\banswer\s*:\s*([ABCD])[.)]?\s*$", answer.strip())
+    # Accept a bare label or an explicit final line; never guess from the last prose
+    # character. Markdown emphasis markers observed from real ACP transcripts (e.g.
+    # "**Answer: A**") are stripped first so they don't break the end-of-string
+    # anchor; this does not loosen the match itself, which still requires the
+    # explicit "answer:" keyword or a bare letter alone on its own line, with the
+    # last explicit statement winning over any earlier one.
+    cleaned = re.sub(r"[*_`]", "", answer).strip()
+    matches = re.findall(r"(?im)^\s*(?:answer\s*:\s*)?([ABCD])[.)]?\s*$", cleaned)
+    explicit = re.search(r"(?i)\banswer\s*:\s*([ABCD])[.)]?\s*$", cleaned)
     selected = explicit[1].upper() if explicit else matches[-1].upper() if matches else None
     return {
         "metric": "accuracy",

@@ -41,3 +41,44 @@ test('simulator chat caps canonical token bound and removes conflicting aliases'
  assert.equal(result.data.max_tokens,undefined);
  assert.throws(()=>reserveRequest({model:'gpt-test',max_completion_tokens:-1},100,chat,0));
 });
+
+import {normalizeLyra, outboundShape} from './policy.mjs';
+const lyra = {model:'apigo/lyra-auto',path:'/v1/messages',max_output_tokens:4096,input_rate:3,output_rate:12,budget:2,allow_tools:false};
+test('lyra target keeps evaluation semantics while dropping provider-only hints', () => {
+  const body = {
+    model:'apigo/lyra-auto', max_tokens:2048,
+    system:[{type:'text',text:'You are Claude Code.',cache_control:{type:'ephemeral'}},{type:'text',text:'Answer exactly.'}],
+    messages:[{role:'user',content:[{type:'text',text:'List three colors.',cache_control:{type:'ephemeral'}}]}],
+    metadata:{user_id:'abc'}, context_management:{edits:[]}, thinking:{type:'enabled',budget_tokens:1024},
+    tools:[{name:'Bash',description:'run'}], tool_choice:'auto', stream:true,
+  };
+  const {data, normalized} = reserveRequest(body, 500, lyra, 0);
+  assert.equal(data.system, 'You are Claude Code.\n\nAnswer exactly.');
+  assert.equal(data.messages[0].content[0].text, 'List three colors.');
+  assert.equal(data.messages[0].content[0].cache_control, undefined);
+  assert.equal(data.metadata, undefined);
+  assert.equal(data.context_management, undefined);
+  assert.deepEqual(data.thinking, {type:'enabled',budget_tokens:1024});
+  assert.equal(data.max_tokens, 2048);
+  assert.equal(data.stream, true);
+  assert.deepEqual(normalized.sort(), ['cache_control','context_management','metadata','system_text_blocks_joined']);
+});
+test('normalization is scoped to lyra messages targets and refuses non-text system blocks', () => {
+  const passthrough = {model:'claude-sonnet-5',metadata:{user_id:'abc'},system:[{type:'text',text:'hi'}]};
+  assert.deepEqual(normalizeLyra(passthrough, {...lyra, model:'claude-sonnet-5'}), []);
+  assert.deepEqual(passthrough.metadata, {user_id:'abc'});
+  assert.deepEqual(passthrough.system, [{type:'text',text:'hi'}]);
+  assert.deepEqual(normalizeLyra({metadata:{}}, {...lyra, path:'/v1/responses'}), []);
+  assert.throws(()=>normalizeLyra({system:[{type:'image'}]}, lyra), /refusing to alter evaluation input/);
+});
+test('outbound shape records parameter names without any prompt text', () => {
+  const shape = outboundShape({model:'apigo/lyra-auto', system:'a'.repeat(9000), max_tokens:2048, stream:true,
+    messages:[{role:'user',content:[{type:'text',text:'secret question'}]}], samples:[1,2,3,4,5,6,7,8]});
+  assert.equal(shape.model, 'apigo/lyra-auto');
+  assert.equal(shape.system, '<string:9000>');
+  assert.equal(shape.max_tokens, 2048);
+  assert.equal(shape.messages[0].content[0].type, 'text');
+  assert.equal(shape.messages[0].content[0].text, '<string:15>');
+  assert.equal(shape.samples[6], '+2');
+  assert(!JSON.stringify(shape).includes('secret'));
+});

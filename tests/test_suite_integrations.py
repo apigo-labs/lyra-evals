@@ -49,10 +49,37 @@ def test_gpqa_shuffle_and_strict_answer(tmp_path):
     assert first == gpqa_rows(path, seed=12)
     answer = first[0]["expected"]
     assert f"{answer}. right" in first[0]["prompt"]
+    # Closed-book/no-tool protocol must be present so ACP agents don't try to call
+    # tools that don't exist for this task (observed root cause of GPQA timeouts).
+    assert "closed-book" in first[0]["prompt"]
+    assert "no tools" in first[0]["prompt"] or "no tool" in first[0]["prompt"]
     assert gpqa_score("Reasoning\nAnswer: " + answer, answer)["correct"]
     assert gpqa_score("Answer: " + answer.lower(), answer)["correct"]
     assert not gpqa_score("This prose ends with " + answer, answer)["correct"]
     assert "expected" not in agent_input("gpqa", first[0])
+
+
+def test_gpqa_score_real_observed_answer_formats():
+    # Paraphrased shapes seen in real ACP transcripts (no GPQA question text copied).
+    # Inline reasoning immediately followed by the final line, no separating space.
+    reasoning = "Working through the reaction mechanism and stereochemistry assignment."
+    assert gpqa_score(reasoning + "Answer: A", "A")["correct"]
+    assert not gpqa_score(reasoning + "Answer: A", "B")["correct"]
+    # Markdown-bolded final line must still parse without loosening to "any letter".
+    assert gpqa_score("Reasoning here.\n**Answer: C**", "C")["correct"]
+    assert gpqa_score("Reasoning here.\n*Answer: C*", "C")["correct"]
+    # A bare boxed/backticked letter on its own final line.
+    assert gpqa_score("Reasoning here.\n`B`", "B")["correct"]
+    # Ambiguous: two distinct explicit final-answer statements => last one wins,
+    # matching the documented "last explicit final-answer statement wins" rule.
+    result = gpqa_score("First I thought Answer: A\nOn reflection, Answer: B", "B")
+    assert result["correct"]
+    assert result["parsed_answer"] == "B"
+    # Nothing explicit at all (letter only appears inside prose) stays unscored,
+    # never guessed from the last character in the text.
+    unparsed = gpqa_score("The correct choice is discussed above in option A territory", "A")
+    assert unparsed["parsed_answer"] is None
+    assert not unparsed["correct"]
 
 
 def test_lcb_encoded_tests_and_public_projection():

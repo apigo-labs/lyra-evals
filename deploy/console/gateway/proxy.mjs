@@ -1,8 +1,9 @@
 // A model-specific HTTP relay. It holds the provider key; agent containers never do.
 import http from 'node:http';
 import fs from 'node:fs';
-import {reserveRequest, parseUsage} from './policy.mjs';
+import {reserveRequest, parseUsage, outboundShape} from './policy.mjs';
 import {UsageStream} from './stream.mjs';
+import {sawTerminalEvent, statusForResponse, statusForError} from './status.mjs';
 import {once} from 'node:events';
 const config = JSON.parse(fs.readFileSync('/config/relay.json', 'utf8'));
 const key = fs.readFileSync('/config/key', 'utf8').trim();
@@ -23,12 +24,15 @@ http.createServer(async (req, res) => {
   data = reservation.data;
   reservedMicros += reservation.upperMicros;
   const upper = reservation.upperMicros / 1e6;
-  const record = {model:config.model,index:records.length, reserved_usd:upper, status:'pending', usage:null, estimated_cost_usd:null, request_id:null};
+  const record = {model:config.model,index:records.length, reserved_usd:upper, status:'pending', usage:null, estimated_cost_usd:null, request_id:null, client_error:null, normalized:reservation.normalized, outbound:outboundShape(data)};
   records.push(record); save();
   const started = Date.now();
   const disconnected = new AbortController();
-  res.on('close', () => {if(!res.writableEnded) disconnected.abort();});
-  const signal = AbortSignal.any([disconnected.signal, AbortSignal.timeout(config.deadline_seconds * 1000)]);
+  let clientDisconnected = false;
+  res.on('close', () => {if(!res.writableEnded) {clientDisconnected = true; disconnected.abort();}});
+  const deadline = AbortSignal.timeout(config.deadline_seconds * 1000);
+  const signal = AbortSignal.any([disconnected.signal, deadline]);
+  let completedSeen = false;
   try {
     const response = await fetch(config.endpoint + config.path, {method:'POST', redirect:'error', signal, headers:{'content-type':'application/json','authorization':`Bearer ${key}`,'x-api-key':key,'anthropic-version':'2023-06-01',...(req.headers['anthropic-beta'] ? {'anthropic-beta':req.headers['anthropic-beta']} : {})}, body:JSON.stringify(data)});
     record.request_id = response.headers.get('x-request-id') || response.headers.get('request-id');
@@ -46,7 +50,7 @@ http.createServer(async (req, res) => {
       const output = usage.output_tokens ?? usage.completion_tokens;
       if(Number.isFinite(input) && Number.isFinite(output)) record.estimated_cost_usd = ((input + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0)) * config.input_rate + output * config.output_rate) / 1000000;
       record.duration_ms = Date.now() - started;
-      if(parsed.event_types.some(t => ['response.completed','response.incomplete','message_stop'].includes(t))) record.status = 'received';
+      if(sawTerminalEvent(parsed.event_types)) {completedSeen = true; record.status = 'received';}
       save();
     }
     for await(const part of response.body) {
@@ -56,8 +60,16 @@ http.createServer(async (req, res) => {
     }
     if(isStream) stream.consume(new Uint8Array(), true);
     updateUsage();
+    // Non-stream completion: response.ok plus the body having been fully read counts as completed.
+    if(!isStream && response.ok) completedSeen = true;
     res.end();
-    record.status = response.ok ? 'received' : `http_${response.status}`;
-  } catch {record.status = 'transport_unknown'; if(!res.headersSent) fail(502,'Gateway transport failed'); else res.end();}
+    record.status = statusForResponse({completed: completedSeen, responseOk: response.ok, httpStatus: response.status});
+  } catch {
+    const reason = clientDisconnected ? 'client_disconnected' : deadline.aborted ? 'deadline' : 'client_write_failed';
+    const {status, client_error} = statusForError({completed: completedSeen, reason});
+    record.status = status;
+    record.client_error = client_error;
+    if(!res.headersSent) fail(502,'Gateway transport failed'); else res.end();
+  }
   finally {record.duration_ms = Date.now() - started; save();}
 }).listen(8080, '0.0.0.0');

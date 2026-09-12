@@ -2,11 +2,24 @@
 title: VOHU Evals Context-KG 变更日志
 tags: [meta, log]
 links: []
-updated: 2026-09-09
+updated: 2026-09-12
 sources: 0
 ---
 
 # VOHU Evals Context-KG 变更日志
+
+## [2026-09-12] fix | GPQA 真实 ACP 从不出分：工具调用循环而非解析器
+
+- 诊断真实 ACP 小样本验收里的 GPQA episode 证据：多起 `system_failed`（TimeoutError / episode budget exhausted / Agent 未正常完成回答）均在请求级 usage 里带有 `response.custom_tool_call_input.*` 事件，说明模型在几乎每轮响应都尝试发起工具调用，但该赛道不提供工具结果，Agent 因此反复重试、跨多次请求耗尽 deadline 或预算，从未产出可解析文本；唯一评出分的样本文本能被既有严格解析器正确抽取，只是答案本身错——解析器不是根因。
+- 在 `suites/packs.py::gpqa_rows` 的 GPQA prompt 尾部追加显式闭卷/禁工具/单轮纯文本协议句，降低模型主动发起工具调用的倾向；`gpqa_score` 增加防御性 Markdown 修饰符剥离（`*`/`_`/`` ` ``），解析规则本身未放宽，仍是“显式最终答案行或独立字母行，取最后一条，含糊不计分”。
+- 新增/扩充 `tests/test_suite_integrations.py`（真实观测到的收尾格式、含糊多答案取最后一条、无显式收尾不计分）与 `tests/test_gpqa_offline_scoring.py`（`scripts/score_benchmark.py` 端到端 fixture 覆盖，含用例覆盖不全时报错）。
+- Deadline/`max_output_tokens`/episode 预算默认值不在本次改动范围（属于 planner 一侧），已按观测的耗时与 reasoning token 用量另行反馈，未在此处修改默认值。
+
+## [2026-09-12] fix | Lyra 路由目标的 Anthropic Messages 入口
+
+- Lyra 路由目标与直连模型共用 `/v1/messages`，但入口只接受协议子集，且各档位不一致；同一 harness 下直连 Claude 正常、三个 Lyra 目标全部 400。拒绝规则位于闭源组件，公开 Gateway 已移除 Lyra 路由，无法从代码确认参数名。
+- 转发器对 `apigo/lyra-*` 目标只删除不影响采样结果的参数（`metadata`、`context_management`、`cache_control`），并把全文本 `system` 块按原序连接为字符串；`max_tokens`、`thinking`、消息内容原样透传，非文本 `system` 块直接拒绝而非改写。
+- 账本逐请求记录已应用的规则名与无提示文本的出站请求形状，用于把 Gateway 拒绝归因到具体参数；规划阶段对该组合追加 blocker，要求先做单题入口预检。
 
 ## [2026-09-09] fix | ACP 闭卷校准
 

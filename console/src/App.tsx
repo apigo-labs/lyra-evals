@@ -316,7 +316,7 @@ export default function App() {
                     overview: "在相同任务与执行条件下，观察质量、成本和时间。",
                     results: "查看各模型变体的评测成绩，导出可复核的数据。",
                     runs: "追踪并行作业，查看逐题进度与执行证据。",
-                    models: "配置 APIGO 入口。API Key 只保存在本地服务端。",
+                    models: "配置 APIGO 入口。Gateway API Key 从本地 .env 读取。",
                     benchmarks:
                       "官方任务与评分；GPT 使用 Codex，Claude 使用 Claude Agent。",
                     theme: "Paper / Ink · 以白色承载内容，以黑色建立重点。",
@@ -879,7 +879,7 @@ function ModelList({
                 </p>
                 <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-neutral-500">
                   <span>{m.protocol}</span>
-                  <span>凭据已保存</span>
+                  <span>使用 .env 中的共享 Gateway API Key</span>
                   <span>能力以冻结计划的执行预检为准</span>
                 </div>
                 <PriceCap targetId={m.id} />
@@ -906,7 +906,7 @@ function ModelList({
       ) : (
         <Empty
           title="从一个模型开始"
-          detail="填写 APIGO endpoint、模型名称、协议和专用 API Key。服务端不会回传完整凭据。"
+          detail="填写 APIGO endpoint、模型名称和协议。Gateway API Key 统一从本地 .env 读取。"
           action={
             <Button size="sm" variant="outline" onClick={onAdd}>
               <Plus />
@@ -954,7 +954,7 @@ function ModelDialog({ open, close }: { open: boolean; close: () => void }) {
         if (!v) close();
       }}
       title="添加模型连接"
-      description="连接 APIGO Gateway。凭据不会进入浏览器持久化存储或运行报告。"
+      description="连接 APIGO Gateway，使用本地 .env 中配置的共享 API Key。"
     >
       <form className="mt-6 grid gap-4" onSubmit={submit}>
         <Field label="配置名称">
@@ -1001,19 +1001,6 @@ function ModelDialog({ open, close }: { open: boolean; close: () => void }) {
             </select>
           </Field>
         </div>
-        <Field
-          label="API Key"
-          hint="使用评测专用、受预算限制的凭据。本机私有文件保存。"
-        >
-          <input
-            className={inputClass}
-            name="api_key"
-            type="password"
-            autoComplete="new-password"
-            placeholder="输入 API Key"
-            required
-          />
-        </Field>
         {error && (
           <p role="alert" className="text-xs text-red-700">
             {error}

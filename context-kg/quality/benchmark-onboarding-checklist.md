@@ -2,7 +2,7 @@
 title: Benchmark 接入清单与 Fusion 能力约束
 tags: [quality, benchmark, integration, proposal]
 links: [index, benchmark-integration, fusion-router-evaluation-design]
-updated: 2026-09-09
+updated: 2026-09-12
 sources: 11
 ---
 
@@ -32,6 +32,8 @@ sources: 11
 
 首版不启用 WebSearch/WebFetch，也不依赖 Fusion 内置搜索。IFEval/GPQA/LiveCodeBench 的禁工具规则需要运行时配置和隔离环境共同落实，不能只在提示里要求。模型推理内部的多次调用必须记录，不把“无工具”写成“必然只调用一次模型”。
 
+真实 ACP 小样本验收中 GPQA 曾长期不出分：episode 证据显示模型（尤其 Codex/gpt 系高 effort）在几乎每次响应里都附带一次工具调用尝试（`response.custom_tool_call_input.*` 事件），但该赛道网关按设计拒绝/不提供工具结果，导致 Agent 反复重试、跨 3–4 次请求耗尽 deadline 或 episode 预算，从未产出可解析的最终答案；这是“Agent 循环/多次请求”而非解析器 bug——已发现的唯一评出分的样本文本能被既有严格解析器正确抽取（`Answer: X` 收尾），只是答案本身错。据此在 `suites/packs.py` 的 GPQA prompt 中新增显式闭卷协议句（声明本任务没有工具、禁止调用、要求单轮纯文本作答并给出无 Markdown 修饰的收尾行），解析器同时做了防御性加固（剥离 `*`/`_`/`` ` `` 等修饰符后再按原有“显式最终答案行/独立字母行，取最后一条，含糊即不计分”的严格规则解析，未放宽为“文本任意处出现的字母”）。这只降低了模型主动发起工具调用的概率；网关/沙箱层面是否真的物理隔离工具结果、以及 deadline_seconds/max_output_tokens/episode_budget 默认值是否匹配高 effort 推理耗时，仍需要拥有 planner/live 执行配置的一侧核实，未在此更新。
+
 Claude Code 是执行程序；Claude 模型只是可能的被测目标之一。同 Harness 对照通过 APIGO 将同一程序背后的模型替换为 Fusion/兼容单模型；跨 Harness 对照独立报告，并从审计证据确认实际调用身份。
 
 ### Claude Code 接口与实验边界
@@ -42,6 +44,27 @@ Claude Code 是执行程序；Claude 模型只是可能的被测目标之一。�
 - 在冻结版本上验证主调用、压缩及辅助请求的模型选择；禁用不需要的 subagent/隐式 fallback，记录全部实际模型和费用，不能只依据 CLI 的主模型参数作比较。
 - 协议适配应尽可能保持消息、工具和错误语义；为不同模型添加的提示、修复或功能降级必须进入 manifest。结果解释为“Claude Code + 适配层 + 被测目标”的表现。
 - 保留官方 evaluator 不自动保留官方成绩可比性。统一标明 Claude Code 版本、profile、任务预算与差异；外部榜单可比性逐赛道核验。
+
+### Lyra 路由模型的 Anthropic Messages 入口约束
+
+Lyra 路由目标（`apigo/lyra-*`）与直连单模型共用 `/v1/messages` 路由，但入口只接受该协议的子集，且不同路由档位接受范围不一致。实测证据：同一 Claude Agent ACP 与同一转发器下，直连 Claude 模型全部正常返回；三个 Lyra 目标全部返回 HTTP 400，其中一个档位报告"native text parameter unsupported"，另两个档位报告"protocol unsupported"，即后者根本不接受 Anthropic Messages 协议。
+
+Gateway 开源代码不包含这些校验：Lyra 内部路由已从公开 Gateway 中移除（私有 `--lyra.*` 启动参数被显式拒绝，`/inner/v1/lyra/*` 路由在鉴权前返回 404），因此拒绝规则来自闭源组件，无法从代码确认具体参数名。最接近的公开校验是 Gateway 对 WebSearch 工具声明的形状检查，它拒绝的是工具数组而非文本参数。
+
+转发器（`deploy/console/gateway/policy.mjs`）对 `apigo/lyra-` 开头且路径为 `/v1/messages` 的目标应用固定规则：
+
+| 参数 | 处理 | 是否影响评测语义 |
+|---|---|---|
+| `metadata` | 删除 | 否，仅为调用方标签 |
+| `context_management` | 删除 | 否，单轮闭卷任务不触发压缩 |
+| `cache_control`（递归，含 system 与 message 内容块） | 删除 | 否，仅影响缓存与计费 |
+| `system` 为全 `text` 块数组 | 按原顺序以空行连接为字符串 | 否，逐字保留提示内容 |
+| `system` 含非文本块 | 转发器返回 4xx 并拒绝请求 | 是，禁止静默改写评测输入 |
+| `max_tokens`、`thinking`、`stream`、消息内容 | 原样透传 | 是，不允许降级 |
+
+转发器逐请求在账本中记录 `normalized`（实际应用的规则名）与 `outbound`（仅键名与结构的请求形状，所有字符串值替换为长度占位，不写入提示文本、请求头或凭据），用于把 Gateway 的拒绝归因到具体参数。规划阶段对 `apigo/lyra-*` + `anthropic_messages` 的组合追加 blocker，要求先做单题入口预检再展开付费批次。
+
+上述规则尚未在 Lyra 入口实测通过；在预检成功前不应把 Lyra 目标计入横向成绩。
 
 HLE、BrowseComp、DRACO、FRAMES 不进入本轮建设范围；既有插件和历史协议保留，不删除。
 

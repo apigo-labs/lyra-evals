@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
-import stat
 from pathlib import Path
 
 import pytest
@@ -25,31 +24,28 @@ def model_input():
         "endpoint": "https://gateway.example.com",
         "model": "test/model",
         "protocol": "anthropic_messages",
-        "api_key": "synthetic-private-value",
     }
 
 
-def test_secret_not_exposed_or_stored_in_database(tmp_path: Path):
+def test_target_metadata_only_no_per_target_secret_files(tmp_path: Path):
     with TestClient(create_app(tmp_path)) as client:
         response = client.post("/api/targets", json=model_input(), headers=HEADERS)
         assert response.status_code == 201
         target = response.json()
         assert "api_key" not in target
-        assert "synthetic-private-value" not in client.get("/api/targets").text
+        assert "has_key" not in target
         with sqlite3.connect(tmp_path / "console.sqlite3") as db:
-            assert (
-                "synthetic-private-value"
-                not in db.execute("SELECT metadata FROM targets").fetchone()[0]
-            )
-        secret = tmp_path / "secrets" / target["id"]
-        assert stat.S_IMODE(secret.stat().st_mode) == 0o600
+            metadata = db.execute("SELECT metadata FROM targets").fetchone()[0]
+            assert "api_key" not in metadata
+        # Credentials are never per-target files on disk anymore; the Console
+        # holds only model/protocol/endpoint metadata and reads the shared
+        # gateway key from VOHU_EVALS_API_KEY at run time.
+        assert not (tmp_path / "secrets").exists()
         bad = client.post(
             "/api/targets", json={**model_input(), "protocol": "invalid"}, headers=HEADERS
         )
         assert bad.status_code == 422
-        assert "synthetic-private-value" not in bad.text
         assert client.delete(f"/api/targets/{target['id']}", headers=HEADERS).status_code == 200
-        assert not secret.exists()
 
 
 def test_cross_origin_and_host_rejected(tmp_path: Path):

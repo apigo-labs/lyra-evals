@@ -72,7 +72,6 @@ class TargetInput(BaseModel):
     endpoint: str = Field(min_length=1, max_length=2048)
     model: str = Field(min_length=1, max_length=200)
     protocol: Literal["anthropic_messages", "openai_chat_completions", "openai_responses"]
-    api_key: str = Field(min_length=1, max_length=4096, repr=False)
 
     @field_validator("endpoint")
     @classmethod

@@ -56,11 +56,24 @@ def price_bound(catalog: dict, model: str, cap: dict | None = None) -> tuple[flo
     return max(input_rates), max(output_rates)
 
 
+def _write_key_file(path: Path, api_key: str) -> None:
+    """Write the shared gateway API key to an episode-scoped file for container mounting.
+
+    The file lives only inside the per-episode temporary directory and is
+    removed with it; the Console never persists per-target credentials.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        stream.write(api_key)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
 async def live_episode(
     name: str,
     variant: dict,
     prompt: str,
-    key_path: Path,
+    api_key: str,
     root: Path,
     workspace: Path | None = None,
     swe_environment: dict | None = None,
@@ -80,6 +93,8 @@ async def live_episode(
     with tempfile.TemporaryDirectory(dir=root) as temporary:
         work = Path(temporary).absolute()
         (work / "ledger").mkdir()
+        key_path = work / "key"
+        _write_key_file(key_path, api_key)
         config = {
             "model": variant["connection"]["model"],
             "endpoint": "https://api.apigo.ai",
@@ -146,7 +161,7 @@ async def live_episode(
                 "-v",
                 f"{work}/relay.json:/config/relay.json:ro",
                 "-v",
-                f"{key_path.absolute()}:/config/key:ro",
+                f"{key_path}:/config/key:ro",
                 "-v",
                 f"{work}/ledger:/ledger",
                 variant["relay_digest"],
@@ -160,7 +175,10 @@ async def live_episode(
             if tau is not None:
                 from vohu_evals.console.tau_runtime import ROOT, TauRuntime
 
-                tau_runtime = TauRuntime(name, network, work, key_path.absolute().parent, tau)
+                # The simulator relay mounts a key file named after its own target_id;
+                # it shares the same episode-scoped gateway key as the main variant.
+                _write_key_file(work / tau["simulator"]["target_id"], api_key)
+                tau_runtime = TauRuntime(name, network, work, work, tau)
                 initial = await tau_runtime.start()
                 prompt = (
                     "Complete the customer interaction using tau_step. "
@@ -244,9 +262,19 @@ async def live_episode(
                 "session/prompt",
                 {"sessionId": session["sessionId"], "prompt": [{"type": "text", "text": prompt}]},
             )
-            if result.get("stopReason") != "end_turn":
-                raise ACPError("Agent 未正常完成回答: " + str(result.get("stopReason")))
             billing = json.loads((work / "ledger/requests.json").read_text())
+            client_errors = sorted(
+                {r["client_error"] for r in billing["requests"] if r.get("client_error")}
+            )
+            if result.get("stopReason") != "end_turn":
+                detail = str(result.get("stopReason"))
+                if client_errors:
+                    # The relay saw a Gateway completion, so the request was billed; the
+                    # failure is on the agent-client side and must be reported as such.
+                    detail += "；Gateway 已完成并计费，Agent 客户端侧失败: " + ", ".join(
+                        client_errors
+                    )
+                raise ACPError("Agent 未正常完成回答: " + detail)
             if not any(r.get("status") == "received" for r in billing["requests"]):
                 raise ACPError("没有成功的 Gateway 请求证据，拒绝将 ACP 错误文本当作答案评分")
             if (

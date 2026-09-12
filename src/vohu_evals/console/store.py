@@ -14,8 +14,6 @@ class Store:
     def __init__(self, root: Path):
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(root, 0o700)
-        self.secrets = root / "secrets"
-        self.secrets.mkdir(exist_ok=True, mode=0o700)
         self.db = sqlite3.connect(root / "console.sqlite3")
         os.chmod(root / "console.sqlite3", 0o600)
         self.db.row_factory = sqlite3.Row
@@ -34,19 +32,9 @@ class Store:
 
     def add_target(self, data: TargetInput) -> dict[str, Any]:
         identifier = uuid.uuid4().hex
-        path = self.secrets / identifier
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            stream.write(data.api_key)
-            stream.flush()
-            os.fsync(stream.fileno())
-        public = {**data.model_dump(exclude={"api_key"}), "id": identifier, "has_key": True}
-        try:
-            self.db.execute("INSERT INTO targets VALUES (?, ?)", (identifier, json.dumps(public)))
-            self.db.commit()
-        except Exception:
-            path.unlink(missing_ok=True)
-            raise
+        public = {**data.model_dump(), "id": identifier}
+        self.db.execute("INSERT INTO targets VALUES (?, ?)", (identifier, json.dumps(public)))
+        self.db.commit()
         return public
 
     def set_price_cap(self, identifier: str, cap: dict):
@@ -65,7 +53,6 @@ class Store:
             return False
         self.db.execute("DELETE FROM targets WHERE id = ?", (identifier,))
         self.db.commit()
-        (self.secrets / identifier).unlink(missing_ok=True)
         return True
 
     def save_run(self, run: dict[str, Any]) -> None:

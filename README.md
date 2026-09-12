@@ -16,8 +16,11 @@ make console
 
 当前可运行真实 Docker 中的合成 ACP 自检，支持评测集内并发、跨评测集并发和取消；自检不调用模型，
 不是五个 benchmark 的正式成绩。正式运行在官方任务适配、Gateway 唯一出口与预算对账完成前会明确拒绝。
-模型配置保存于 `.local/console/`；API Key 是权限为 0600 的本地文件，不回显、不写入浏览器持久化存储，
-目前不是加密密钥库。不要将本地控制器暴露到公网。
+模型配置（名称/协议/Endpoint/模型 ID）保存于 `.local/console/`；凭据不落在这些文件里，而是复用
+CLI 的 `.env`（`VOHU_EVALS_API_KEY` 作为所有连接共用的 Gateway Key，`VOHU_EVALS_PLATFORM_BASE_URL`
+/`VOHU_EVALS_WORKSPACE_ID`/`VOHU_EVALS_PLATFORM_TOKEN`/`VOHU_USER_EMAIL`/`VOHU_USER_PASSWORD` 用于平台
+账单对账，令牌过期时自动登录刷新），变量名与 `.env.example` 一致。凭据不回显、不写入浏览器持久化存储。
+不要将本地控制器暴露到公网。
 
 ## 既有 VOHU CLI
 

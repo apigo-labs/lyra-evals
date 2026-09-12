@@ -11,7 +11,6 @@ TARGET = {
     "endpoint": "https://gateway.example/v1",
     "model": "gpt-test",
     "protocol": "openai_responses",
-    "api_key": "never-export-this",
 }
 
 
@@ -198,3 +197,20 @@ def test_custom_codex_model_requires_frozen_config_and_relay_validation():
     assert result["serialized_effort"] is None
     assert result["effective_effort"] is None
     assert result["effort_configuration"] == "codex_config_with_relay_validation"
+
+
+def test_lyra_routed_targets_are_blocked_until_ingress_preflight():
+    lyra = {
+        "id": "lyra",
+        "endpoint": "https://api.apigo.ai",
+        "model": "apigo/lyra-auto",
+        "protocol": "anthropic_messages",
+    }
+    plan = build_plan(
+        spec(variants=[{"target_id": "lyra", "harness": "claude_agent", "efforts": ["high"]}]),
+        [lyra],
+    )
+    assert any("apigo/lyra-auto" in b for b in plan["blockers"])
+    assert not plan["executable"]
+    plain = build_plan(spec(), [TARGET])
+    assert not any("lyra" in b for b in plain["blockers"])

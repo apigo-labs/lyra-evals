@@ -162,6 +162,22 @@ def build_plan(spec: PlanInput, targets: list[dict], suite_root: Path | None = N
         "Gateway 实际账单尚未对账，当前提供公开价格上界估算",
         "执行前检查公开价格与全部单题预留，缺价格或超预算拒绝启动",
     ]
+    routed = sorted(
+        {
+            v["connection"]["model"]
+            for v in variants
+            if v["connection"]["model"].startswith("apigo/lyra-")
+            and v["connection"]["protocol"] == "anthropic_messages"
+        }
+    )
+    if routed:
+        # Lyra routing models expose only a subset of Anthropic Messages, and the subset
+        # differs per routing tier. Without a preflight the whole batch reserves budget and
+        # is then rejected by the Gateway with HTTP 400.
+        blockers.append(
+            "Lyra 路由模型的 Anthropic Messages 入口为协议子集，执行前需单题预检："
+            + "、".join(routed)
+        )
     datasets = {}
     if suite_root is not None:
         from vohu_evals.suites.packs import dataset_root, load_pack
