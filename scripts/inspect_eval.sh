@@ -11,6 +11,11 @@
 #   scripts/inspect_eval.sh <task> <model-id> [extra inspect args...]
 #   scripts/inspect_eval.sh inspect_evals/ifeval apigo/lyra-auto --limit 10
 #   scripts/inspect_eval.sh inspect_evals/gpqa_diamond gpt-5.6-luna --reasoning-effort high --limit 10
+#   scripts/inspect_eval.sh inspect_tasks/livecodebench_v6.py apigo/lyra-auto --limit 10
+#
+# inspect_tasks/ holds repo-local Inspect tasks for benchmarks inspect_evals does not ship
+# (LiveCodeBench release_v6); they reuse the frozen pack and the offline Docker grader, so
+# they need `make benchmark-lcb-image` and a running Docker daemon.
 #
 # Credentials come from .env (VOHU_EVALS_API_KEY / VOHU_EVALS_GATEWAY_BASE_URL); nothing
 # is printed. Logs go to .local/inspect-logs (git-ignored) unless INSPECT_LOG_DIR is set.
@@ -44,6 +49,16 @@ export APIGO_BASE_URL
 
 LOG_DIR="${INSPECT_LOG_DIR:-.local/inspect-logs}"
 mkdir -p "$LOG_DIR"
+
+# Repo-local tasks (inspect_tasks/...) need vohu_evals and the inspect_tasks package inside
+# the isolated env. They are reached through PYTHONPATH rather than `--with-editable .`:
+# installing this project would add src/instruction_following_eval (the frozen Google
+# original) to the env and shadow the josejg fork that inspect_evals' IFEval scorer imports
+# under the same name. PYTHONPATH is set only for these task invocations, and the wrapper
+# modules import nothing beyond the standard library.
+if [[ "$TASK" == inspect_tasks/* ]]; then
+  export PYTHONPATH="$ROOT/src:$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+fi
 
 exec uvx --from "inspect-ai==$INSPECT_AI_VERSION" \
   --with "inspect-evals==$INSPECT_EVALS_VERSION" \

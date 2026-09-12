@@ -133,6 +133,24 @@ def gpqa_score(answer: str, expected: str) -> dict:
     }
 
 
+LIVECODEBENCH_FORMAT_NOTE = "\nReturn only the Python solution, without Markdown fences.\n"
+
+
+def livecodebench_prompt(row: dict) -> str:
+    """Single source of the LiveCodeBench prompt text.
+
+    The ACP live scheduler and the direct-api Inspect task must ask exactly the same
+    question, so both build the prompt here: public projection only, format note, then
+    the remaining public fields (starter code, public tests) as JSON.
+    """
+    public = agent_input("livecodebench", row)
+    return (
+        public.get("prompt", "")
+        + LIVECODEBENCH_FORMAT_NOTE
+        + json.dumps({k: v for k, v in public.items() if k not in {"case_id", "prompt"}})
+    )
+
+
 def agent_input(suite: str, row: dict) -> dict:
     """Allowlist projection: hidden tests, gold patches, task state never enter Agent context."""
     if suite in {"ifeval", "gpqa"}:

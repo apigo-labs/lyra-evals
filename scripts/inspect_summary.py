@@ -28,6 +28,7 @@ FIELDS = [
     "epoch",
     "score",
     "score_detail",
+    "difficulty",
     "input_tokens",
     "output_tokens",
     "reasoning_tokens",
@@ -118,6 +119,8 @@ def rows_for(path: Path) -> list[dict]:
                 "epoch": sample.get("epoch"),
                 "score": score,
                 "score_detail": detail,
+                # Sample-level stratification key when the task provides one (empty otherwise).
+                "difficulty": (sample.get("metadata") or {}).get("difficulty", ""),
                 "input_tokens": usage.get("input_tokens", ""),
                 "output_tokens": usage.get("output_tokens", ""),
                 "reasoning_tokens": usage.get("reasoning_tokens", ""),

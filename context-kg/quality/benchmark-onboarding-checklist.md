@@ -63,7 +63,7 @@ Claude Code 是执行程序；Claude 模型只是可能的被测目标之一。�
 
 直连单轮、无工具的剖面不自行实现 harness，复用 Inspect AI 的 `openai-api/<provider>/<model>` 提供者与 inspect_evals 官方任务（`ifeval`、`gpqa_diamond`，均使用官方评分器；`gpqa_diamond` 默认 4 个 epoch，横向比较必须显式单 epoch）。入口为 `scripts/inspect_eval.sh`，在 `uvx` 独立环境中固定 inspect-ai / inspect-evals 版本；独立环境的原因是 inspect_evals 的 IFEval 评分器依赖的 `instruction_following_eval` 分支与本仓库冻结的 Google 原版同名。`scripts/inspect_summary.py` 把 `.eval` 日志展平为逐题用量、耗时、响应 id 与 Lyra 路由字段，不导出提示词、回答或凭据。
 
-已验证：三个 Lyra 目标与 gpt-5.6-luna（`--reasoning-effort high` 序列化为请求体 `reasoning_effort`）均能完成单题。推理模型的 `max_tokens` 含推理 token，2048 会被推理耗尽而零分；按设计取 IFEval 8192、GPQA 16384。inspect_evals 未提供 LiveCodeBench release_v6，该赛道仍走本仓库冻结题库与断网评分镜像，或另写 Inspect Task 包装。IFEval 评分器首次运行需下载 NLTK punkt 数据，离线环境需预先放置。
+已验证：三个 Lyra 目标与 gpt-5.6-luna（`--reasoning-effort high` 序列化为请求体 `reasoning_effort`）均能完成单题。推理模型的 `max_tokens` 含推理 token，2048 会被推理耗尽而零分；按设计取 IFEval 8192、GPQA 16384。inspect_evals 未提供 LiveCodeBench release_v6，改由仓库内 `inspect_tasks/livecodebench_v6.py` 薄包装接入：数据集读冻结题库并在任务 metadata 记录 pack 摘要，提示词与 ACP 路径同源（共用 `livecodebench_prompt`），solver 只做单轮生成、无工具无重试，评分复用既有断网 Docker grader 的 pass@1；grader 侧基础设施失败（Docker 缺失、超时、输出非法）作为 sample error 上报，不计为模型答错。该任务通过 `PYTHONPATH` 进入独立环境，不安装本项目，避免同名 `instruction_following_eval` 遮蔽 IFEval 评分器依赖的分支。IFEval 评分器首次运行需下载 NLTK punkt 数据，离线环境需预先放置。
 
 HLE、BrowseComp、DRACO、FRAMES 不进入本轮建设范围；既有插件和历史协议保留，不删除。
 

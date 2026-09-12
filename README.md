@@ -138,10 +138,18 @@ Fusion 路由 `apigo/lyra-*` 只接受 OpenAI Chat Completions，无法由 Claud
 ```bash
 make inspect-eval TASK=inspect_evals/ifeval MODEL=apigo/lyra-auto ARGS="--limit 10 --max-tokens 8192"
 make inspect-eval TASK=inspect_evals/gpqa_diamond MODEL=gpt-5.6-luna ARGS="--reasoning-effort high --limit 10 --max-tokens 16384"
+make inspect-eval TASK=inspect_tasks/livecodebench_v6.py MODEL=apigo/lyra-auto ARGS="--limit 10 --max-tokens 16384"
 make inspect-summary ARGS="--csv .local/inspect-summary.csv"
 ```
 
 包装脚本在 `uvx` 独立环境中固定 inspect-ai 与 inspect-evals 版本，凭据从 `.env` 的 `VOHU_EVALS_API_KEY` 映射，日志写入
 `.local/inspect-logs`。汇总脚本导出逐题用量、耗时、响应 id 与 Lyra 路由字段（路由到的模型、难度、任务类型）。Lyra 的
-usage 含内部路由开销，输出上限只是预留边界；账单以 execution id 对账为准。LiveCodeBench release_v6 不在 inspect_evals 中，
-仍使用本仓库冻结题库与断网评分镜像。`scripts/probe_lyra_protocols.py` 可在冻结计划前用最小请求确认任意模型的协议。
+usage 含内部路由开销，输出上限只是预留边界；账单以 execution id 对账为准。`scripts/probe_lyra_protocols.py` 可在冻结计划前用最小请求确认任意模型的协议。
+
+LiveCodeBench release_v6 不在 inspect_evals 中，由仓库内的 `inspect_tasks/livecodebench_v6.py` 薄包装接入：题目来自
+`.local/suites/livecodebench` 冻结题库（任务 metadata 记录 pack sha256），提示词与 ACP 路径同源，评分仍是既有断网 Docker
+grader，单轮生成、无工具、无重试。运行前需 `make benchmark-lcb-image` 并保证 Docker 可用；grader 本身失败（Docker 缺失、
+超时、输出非法）会作为 Inspect 的 sample error 上报，不计为模型答错。包装脚本只在 `inspect_tasks/` 任务上设置
+`PYTHONPATH=src:.`，不把本项目装进独立环境，避免 `instruction_following_eval` 同名包遮蔽 IFEval 评分器所需的分支。
+
+- `scripts/freeze_inspect_samples.py` 按 `.local/designs/fusion-roadshow-evaluation.md` 第 3 节固定 seed 20260909，从冻结 pack（IFEval/GPQA Diamond/LiveCodeBench release_v6）分层抽取互斥的校准集与主测试集，官方 id 对齐 `--sample-id`（IFEval 用 `key`，GPQA 用 CSV `Record ID`，LCB 用 pack case id），排除 `.local/console/console.sqlite3` 与 `.local/inspect-logs/*.eval` 中已用过的题目，输出到 `.local/inspect-samples/`（默认拒绝覆盖已冻结结果，需 `--force`）。

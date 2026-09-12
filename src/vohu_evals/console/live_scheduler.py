@@ -7,7 +7,6 @@ import copy
 import hashlib
 import json
 import os
-import re
 import time
 import uuid
 from decimal import Decimal
@@ -17,8 +16,13 @@ from urllib.request import urlopen
 from vohu_evals.console.acp import docker_command
 from vohu_evals.console.live import RELAY_IMAGE, SUPPORTED, live_episode, price_bound
 from vohu_evals.console.planner import digest
-from vohu_evals.suites.adapters import grade_livecodebench, grade_text
-from vohu_evals.suites.packs import agent_input, dataset_root, load_pack
+from vohu_evals.suites.adapters import grade_livecodebench, grade_text, lcb_code
+from vohu_evals.suites.packs import (
+    agent_input,
+    dataset_root,
+    livecodebench_prompt,
+    load_pack,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -192,16 +196,7 @@ async def execute(scheduler, run: dict):
                         public = agent_input(job["benchmark"], row)
                         prompt = public.get("prompt", "")
                         if job["benchmark"] == "livecodebench":
-                            prompt += (
-                                "\nReturn only the Python solution, without Markdown fences.\n"
-                                + json.dumps(
-                                    {
-                                        k: v
-                                        for k, v in public.items()
-                                        if k not in {"case_id", "prompt"}
-                                    }
-                                )
-                            )
+                            prompt = livecodebench_prompt(row)
                         async with asyncio.timeout(variant["deadline_seconds"]):
                             response = await live_episode(
                                 name,
@@ -248,11 +243,8 @@ async def execute(scheduler, run: dict):
                                 row, patch, ROOT, ROOT / ".local/execution" / f"{name}-score"
                             )
                         elif job["benchmark"] == "livecodebench":
-                            match = re.fullmatch(
-                                r"\s*```(?:python)?\s*\n(.*?)\n```\s*", answer, re.S
-                            )
                             score = await grade_livecodebench(
-                                row, match[1] if match else answer, image=variant["grader_digest"]
+                                row, lcb_code(answer), image=variant["grader_digest"]
                             )
                         else:
                             score = await asyncio.to_thread(

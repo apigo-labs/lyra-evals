@@ -27,20 +27,32 @@ class DataOnlyUnpickler(pickle.Unpickler):
         raise ValueError("Executable pickle forbidden in test data")
 
 
+def lcb_artifact(row: dict) -> dict:
+    """Resolve the frozen upstream record for a row (hidden tests included; grader-side only)."""
+    if "grader_sha256" not in row:
+        return row
+    checksum = row["grader_sha256"]
+    if not re.fullmatch(r"[a-f0-9]{64}", checksum):
+        raise ValueError("Invalid grader artifact digest")
+    path = (
+        Path(__file__).resolve().parents[3]
+        / ".local/suites/livecodebench/artifacts"
+        / f"{checksum}.json"
+    )
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != checksum:
+        raise ValueError("Grader artifact integrity mismatch")
+    return json.loads(raw)
+
+
+def lcb_code(answer: str) -> str:
+    """Unwrap a single fenced block; identical extraction for ACP and direct-api answers."""
+    match = re.fullmatch(r"\s*```(?:python)?\s*\n(.*?)\n```\s*", answer, re.S)
+    return match[1] if match else answer
+
+
 def lcb_sample(row: dict) -> dict:
-    if "grader_sha256" in row:
-        checksum = row["grader_sha256"]
-        if not re.fullmatch(r"[a-f0-9]{64}", checksum):
-            raise ValueError("Invalid grader artifact digest")
-        path = (
-            Path(__file__).resolve().parents[3]
-            / ".local/suites/livecodebench/artifacts"
-            / f"{checksum}.json"
-        )
-        raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != checksum:
-            raise ValueError("Grader artifact integrity mismatch")
-        row = json.loads(raw)
+    row = lcb_artifact(row)
     private = row["private_test_cases"]
     try:
         hidden = json.loads(private)

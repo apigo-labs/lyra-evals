@@ -8,6 +8,12 @@ sources: 0
 
 # VOHU Evals Context-KG 变更日志
 
+## [2026-09-12] change | LiveCodeBench 直连剖面的 Inspect 薄包装
+
+- 新增 `inspect_tasks/livecodebench_v6.py`：读冻结题库建数据集、任务 metadata 记录 pack 摘要，单轮生成、无工具无重试。
+- 提示词与代码抽取上收为共享函数，ACP 路径与直连剖面同源；评分仍调用既有断网 Docker grader 的 pass@1。
+- grader 基础设施失败作为 Inspect sample error 上报，不计为模型答错；任务经 `PYTHONPATH` 进入独立环境，不安装本项目以免同名包遮蔽 IFEval 评分器依赖。
+
 ## [2026-09-12] decision | Lyra 协议实测与直连剖面复用 Inspect
 
 - 逐协议实测：Lyra 三个路由只接受 OpenAI Chat Completions，Messages / Responses 返回 400 或 502；Console 中 Lyra 目标协议改为 `openai_chat_completions`。
