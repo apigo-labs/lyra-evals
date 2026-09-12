@@ -31,21 +31,50 @@ TASKS=(
   "inspect_tasks/livecodebench_v6.py|livecodebench|16384"
 )
 
+# Completed (task, model) pairs already in LOG_DIR are skipped so an interrupted matrix can be
+# resumed without re-spending. A run counts as done only when its log status is "success".
+done_pairs="$(python3 - "$LOG_DIR" <<'PY'
+import glob, json, subprocess, sys
+pairs = set()
+for path in sorted(glob.glob(f"{sys.argv[1]}/*.eval")):
+    try:
+        raw = subprocess.run(["uvx", "--from", "inspect-ai==0.3.263", "inspect", "log", "dump", "--header-only", path],
+                             check=True, capture_output=True, text=True).stdout
+        head = json.loads(raw)
+    except Exception:
+        continue
+    if head.get("status") != "success":
+        continue
+    task = head["eval"]["task"].split("/")[-1].removesuffix(".py")
+    model = head["eval"]["model"].removeprefix("openai-api/apigo/")
+    pairs.add(f"{task}|{model}")
+print("\n".join(sorted(pairs)))
+PY
+)"
+
 for spec in "${TASKS[@]}"; do
   IFS='|' read -r task suite max_tokens <<<"$spec"
   ids_file="$SAMPLES/$suite.$SET.txt"
   [[ -f "$ids_file" ]] || { echo "missing $ids_file (run scripts/freeze_inspect_samples.py)" >&2; exit 2; }
   ids="$(tr -d '[:space:]' <"$ids_file")"
+  task_key="$(basename "$task" .py)"
   for variant in $VARIANTS; do
     model="${variant%%:*}"
     effort=""
     [[ "$variant" == *:* ]] && effort="${variant##*:}"
+    if grep -qx "$task_key|$model" <<<"$done_pairs"; then
+      echo "=== skip (already complete in $LOG_DIR): $task | $model"
+      continue
+    fi
     echo "=== $task | $model ${effort:+effort=$effort} | $SET ($(tr ',' '\n' <<<"$ids" | wc -l | tr -d ' ') samples)"
+    # --no-fail-on-error: a sample-level failure (e.g. a dropped connection after retries) is
+    # recorded as that sample's error and stays in the denominator; it must not abort the run.
     scripts/inspect_eval.sh "$task" "$model" \
       --sample-id "$ids" \
       --max-tokens "$max_tokens" \
       --max-connections 4 \
       --max-retries 1 \
+      --no-fail-on-error \
       ${effort:+--reasoning-effort "$effort"} \
       "$@"
   done
