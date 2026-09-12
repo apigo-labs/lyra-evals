@@ -23,6 +23,13 @@ set -euo pipefail
 
 INSPECT_AI_VERSION="${INSPECT_AI_VERSION:-0.3.263}"
 INSPECT_EVALS_VERSION="${INSPECT_EVALS_VERSION:-0.20.0}"
+# The IFEval scorer fork is used from a local checkout when present so that starting a run never
+# depends on GitHub being reachable (a transient git failure aborted a whole matrix once).
+# Clone once: git clone https://github.com/josejg/instruction_following_eval .local/upstream/instruction_following_eval
+_LOCAL_IFEVAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.local/upstream/instruction_following_eval"
+if [[ -z "${IFEVAL_SCORER_SRC:-}" && -f "$_LOCAL_IFEVAL/pyproject.toml" ]]; then
+  IFEVAL_SCORER_SRC="$_LOCAL_IFEVAL"
+fi
 IFEVAL_SCORER_SRC="${IFEVAL_SCORER_SRC:-git+https://github.com/josejg/instruction_following_eval}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
