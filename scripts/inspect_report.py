@@ -8,12 +8,41 @@ Router baselines: BestSingle / Oracle / Random (uniform) and the input-agnostic 
 line over the fixed models' Pareto front, following the LLMRouterBench / RouterBench / Google
 "Universal Model Routing" conventions. The candidate pool is the fixed models only.
 
+Scoring rule: accuracy is `n_correct / n_scored`, where `n_scored` counts only the samples that
+came back with a usable score. Samples that ended in a sample-level error are dropped from BOTH
+the numerator and the denominator, because every error shape we see is an infrastructure or
+upstream fault, not the model getting the question wrong:
+
+  * `RetryError(APIConnectionError)` / `RemoteProtocolError` -- the connection is closed by the
+    far end mid-response. Cause is not settled: livecodebench x claude-sonnet-5 piles up on
+    730-733s, but the rest spread over 291-767s, and the Gateway does send an SSE heartbeat every
+    15s, so this is not a connection sitting idle. Either way the model never delivered an
+    answer, and scoring it 0 would measure the transport rather than the model.
+  * `RetryError(InternalServerError)` / `Lyra execution failed` -- Lyra emits
+    `lyra_execution_failed` inside the SSE stream while the outer HTTP status is still 200, so
+    Platform records `ok=true` and bills the request as usual (reproduced 3/3).
+  * `RuntimeError('Official LCB grader failed')` -- our own sandboxed grader crashed; the model's
+    answer was never judged.
+
+Counting those as wrong systematically penalises whichever variant the infrastructure hurt most:
+the main run lost 157 of 2400 samples this way, and they were not spread evenly (gpqa x
+lyra-quality alone lost 24 of 60). So the loss is excluded from accuracy and reported on its own
+instead -- `n_planned`, `n_error`, `n_missing` and `error_rate` sit next to every accuracy number,
+and a group that lost more than `LOSSY_ERROR_RATE` is flagged in the HTML as low-confidence.
+
 Cost attribution rule: Platform bills every Gateway request as its own line item and the Fusion
 routing models (`apigo/lyra-*`) appear as their own line items with their own cost, so no
 sub-call summing is needed. Inspect does not record the Gateway request id, so a run's cost is
 the sum of the export entries whose model equals the variant's model and whose time falls inside
 [run started, run completed + tail]. Per-sample cost is an approximation matched by request
 duration and is left empty when it cannot be matched one to one.
+
+Cost denominator: `cost_usd_per_sample` divides the run's settled cost by `n_scored`, matching the
+accuracy denominator -- it answers "what did one usable answer cost". The numerator deliberately
+keeps the money burned on failures (a `lyra_execution_failed` request is billed as usual; a
+request whose connection is cut never settles, so it contributes $0 on its own), because that
+money was really spent. `cost_usd_per_planned_sample` keeps the old planned-n denominator next to
+it so the change of meaning is visible rather than silent.
 
 Usage:
   uv run python scripts/inspect_report.py --logs .local/inspect-logs/calibration \
@@ -41,6 +70,36 @@ INSPECT_AI_VERSION = "0.3.263"
 MODEL_PREFIX = "openai-api/apigo/"
 FUSION_PREFIX = "apigo/lyra-"
 DEFAULT_TAIL_SECONDS = 5
+
+# A group that lost more than this share of its planned samples to infrastructure faults gets a
+# visual flag in the HTML: the surviving samples may no longer be a fair draw from the frozen set
+# (a timeout preferentially eats the long-reasoning questions), so its accuracy is not comparable
+# to a group that ran clean.
+LOSSY_ERROR_RATE = 0.05
+
+# Sample-level error buckets, matched as substrings against the Inspect error message. Ordered:
+# the first bucket whose marker appears wins. All of them are infrastructure/harness faults, so
+# the split is only for the report -- none of them changes whether the sample is excluded.
+ERROR_KIND_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # The connection was closed mid-response by the far end (cause not settled; see the module
+    # docstring). Includes client-side timeouts, which land in the same bucket for the report.
+    ("connection", ("APIConnectionError", "APITimeoutError", "ConnectionError", "ReadTimeout")),
+    # Upstream returned a failure -- including Lyra's in-stream `lyra_execution_failed`, which
+    # arrives under an HTTP 200 and is still billed.
+    (
+        "upstream",
+        (
+            "lyra_execution_failed",
+            "Lyra execution failed",
+            "InternalServerError",
+            "APIStatusError",
+            "BadRequestError",
+            "RateLimitError",
+        ),
+    ),
+    # Our own grader crashed (Docker missing, sandbox timeout, illegal output).
+    ("scorer", ("grader failed", "Official LCB grader", "ScorerError")),
+)
 
 BENCHMARK_LABELS = {
     "ifeval": "IFEval（指令遵循）",
@@ -70,18 +129,23 @@ REPORT_FIELDS = [
     "model",
     "variant_label",
     "effort",
+    "max_tokens",
     "harness",
     "is_fusion",
     "n_planned",
     "n_scored",
     "n_correct",
     "n_error",
+    "n_missing",
+    "error_rate",
+    "error_kinds",
     "accuracy",
     "wilson_low",
     "wilson_high",
     "cost_usd_settled",
     "cost_billed_requests",
     "cost_usd_per_sample",
+    "cost_usd_per_planned_sample",
     "cost_usd_estimated_public",
     "cost_per_correct_usd",
     "latency_p50_s",
@@ -186,6 +250,10 @@ def header_to_run(header: dict, log_name: str) -> dict:
         "task": normalize_benchmark(meta.get("task") or ""),
         "model": normalize_model(meta.get("model") or ""),
         "effort": (meta.get("model_generate_config") or {}).get("reasoning_effort") or "",
+        # The output cap the run was launched with. It is not uniform across the matrix any more
+        # (scripts/run_calibration.sh gives the Fusion routes a wider cap on GPQA and LCB), so it
+        # has to travel with the row instead of being assumed constant by the reader.
+        "max_tokens": (meta.get("model_generate_config") or {}).get("max_tokens") or "",
         "started": started,
         "completed": completed,
         "n_planned": len(sample_ids) or dataset.get("samples") or 0,
@@ -331,7 +399,14 @@ def public_estimate(model: str, rows: list[dict], prices: dict[str, dict]) -> fl
 
 
 def wilson_interval(correct: int, total: int, z: float = 1.959963984540054) -> tuple[float, float]:
-    """95% Wilson score interval; errors stay in the denominator, so `total` is the planned n."""
+    """95% Wilson score interval over the samples that actually produced a score.
+
+    `total` must be `n_scored`, never `n_planned`. The interval describes the sampling noise of
+    the evidence we have; feeding it the planned n while the numerator only counts scored samples
+    would both shift the centre down and narrow the width, i.e. claim more precision than the
+    surviving samples support. A group that lost half its samples should read as a wide interval
+    over a small n, which is exactly what `n_scored` gives.
+    """
     if total <= 0:
         return 0.0, 0.0
     proportion = correct / total
@@ -395,8 +470,20 @@ def build_rows(
         scores = [row.get("score") for row in rows if row.get("score") in {"0", "1"}]
         n_scored = len(scores)
         n_correct = sum(1 for score in scores if score == "1")
-        accuracy = n_correct / n_planned if n_planned else None
-        low, high = wilson_interval(n_correct, n_planned) if n_planned else (None, None)
+        # Samples the log never recorded at all (an aborted run), as opposed to samples that ran
+        # and errored. Both are loss, but only the second one has an error message to classify.
+        n_missing = max(n_planned - n_scored - n_error, 0)
+        # Accuracy over the evidence we actually have. Errored samples carry no score -- the
+        # connection was cut or the upstream failed before an answer existed -- so scoring them 0
+        # would measure the infrastructure, not the model. They are excluded from numerator and
+        # denominator alike and surfaced separately as n_error / error_rate.
+        accuracy = n_correct / n_scored if n_scored else None
+        low, high = wilson_interval(n_correct, n_scored) if n_scored else (None, None)
+        # Loss share of the planned set: everything that failed to yield a score, errors and
+        # missing samples together. This is the number that tells a reader how much of the cell
+        # is missing, which the accuracy alone no longer shows once the errors are excluded.
+        error_rate = (n_planned - n_scored) / n_planned if n_planned else None
+        error_kinds = _error_kinds(rows, missing=n_missing)
 
         latencies = [
             value
@@ -427,18 +514,33 @@ def build_rows(
                 "model": model,
                 "variant_label": variant_label(model),
                 "effort": run.get("effort", ""),
+                "max_tokens": run.get("max_tokens", ""),
                 "harness": "direct",
                 "is_fusion": str(is_fusion(model)).lower(),
                 "n_planned": n_planned,
                 "n_scored": n_scored,
                 "n_correct": n_correct,
                 "n_error": n_error,
+                "n_missing": n_missing,
+                "error_rate": _round(error_rate, 4),
+                "error_kinds": json.dumps(error_kinds, ensure_ascii=False, sort_keys=True)
+                if error_kinds
+                else "",
                 "accuracy": _round(accuracy, 4),
                 "wilson_low": _round(low, 4),
                 "wilson_high": _round(high, 4),
                 "cost_usd_settled": "" if cost_total is None else round(cost_total, 6),
                 "cost_billed_requests": billed,
+                # Settled cost per usable answer: same denominator as accuracy, so the two read
+                # together. The numerator keeps the spend on failed attempts (Lyra bills
+                # `lyra_execution_failed` as usual; a cut connection never settles and adds $0),
+                # because that is what the run really cost.
                 "cost_usd_per_sample": ""
+                if cost_total is None or not n_scored
+                else round(cost_total / n_scored, 6),
+                # The previous definition, kept so the switch of denominator is visible in the
+                # exports instead of silently changing what the old column name meant.
+                "cost_usd_per_planned_sample": ""
                 if cost_total is None or not n_planned
                 else round(cost_total / n_planned, 6),
                 "cost_usd_estimated_public": _round(estimate, 6),
@@ -469,6 +571,32 @@ def _column(rows: list[dict], field: str) -> list[float]:
     return [value for row in rows if (value := _number(row.get(field))) is not None]
 
 
+def classify_error(message: str) -> str:
+    """Bucket one Inspect sample error into connection / upstream / scorer / other.
+
+    Only used to describe the loss in the report -- the exclusion from accuracy does not depend on
+    the bucket, because none of these shapes is the model answering wrongly. The raw messages are
+    not groupable as-is: Inspect wraps them as `RetryError(<Future at 0x... raised X>)`, so the
+    memory address makes every message unique and only the inner exception name is stable.
+    """
+    for kind, markers in ERROR_KIND_MARKERS:
+        if any(marker in message for marker in markers):
+            return kind
+    return "other"
+
+
+def _error_kinds(rows: list[dict], *, missing: int = 0) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        message = row.get("error") or ""
+        if message:
+            kind = classify_error(message)
+            counts[kind] = counts.get(kind, 0) + 1
+    if missing:
+        counts["missing"] = missing
+    return counts
+
+
 def _routing_counts(rows: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
     for row in rows:
@@ -493,7 +621,15 @@ def _sort_key(key: tuple[str, str]) -> tuple[int, str, int, str]:
 # Routing"). The candidate pool is the FIXED models only -- they are the alternatives the router
 # chooses between, so a Fusion variant is never its own baseline. Everything is computed per
 # benchmark on the same frozen sample ids; a sample counts as correct for a model only when
-# score == "1", so errors and empty scores count as incorrect and the denominator stays n_planned.
+# score == "1".
+#
+# The denominator follows the same rule as the per-variant accuracy: a sample that no pool model
+# managed to score is infrastructure loss, not a question everyone got wrong, so it leaves the
+# oracle denominator entirely. A sample that at least one model scored stays in -- there the pool
+# genuinely had a shot at it, and a model that errored on it simply is not a candidate for that
+# sample. Keeping such samples in on the old n_planned basis would drag the Oracle below
+# BestSingle whenever a fixed model lost samples, which is arithmetically impossible for an upper
+# bound and a sure sign the denominators had drifted apart.
 
 BASELINE_CSV_MODELS = {
     "best_single": "baseline:best_single",
@@ -507,18 +643,26 @@ BASELINE_LABELS = {
 }
 COST_FALLBACK_NOTE = (
     "逐题成本优先用按请求时长匹配到的账单金额；匹配不上的题回退到该模型在本赛道的"
-    "运行平均每题成本（总结算成本 ÷ 题数）。"
+    "运行平均每题成本（总结算成本 ÷ 成功评分题数）。"
 )
 
 
 def _sample_cost_table(
     detailed: list[dict], benchmark: str, model: str, run_average: float | None
 ) -> tuple[dict[str, float], int]:
-    """{sample_id: cost}: the duration-matched cost, else the model's run-average per sample."""
+    """{sample_id: cost} over the model's SCORED samples: matched cost, else the run average.
+
+    Errored samples are skipped. They have no usable answer, so they cannot be a routing target
+    for the Oracle, and letting them take the run-average fallback would price a failure as if it
+    had produced an answer. The money those attempts did cost is not lost from the report -- it
+    stays inside `cost_usd_settled`, and therefore inside the run average used as the fallback.
+    """
     costs: dict[str, float] = {}
     fallback = 0
     for row in detailed:
         if row.get("benchmark") != benchmark or row.get("variant") != model:
+            continue
+        if row.get("score") not in {"0", "1"}:
             continue
         sample_id = str(row.get("sample_id"))
         matched = _number(row.get("cost_usd_matched"))
@@ -663,15 +807,20 @@ def compute_baselines(report: list[dict], detailed: list[dict]) -> dict[str, dic
                 }
             )
 
+        # The evaluable set: samples at least one pool model actually scored. A sample every model
+        # lost to a connection cut carries no evidence about routing, so it is dropped here the
+        # same way errored samples are dropped from each variant's accuracy.
+        pool_models = {entry["model"] for entry in pool}
         sample_ids = sorted(
             {
                 str(sample["sample_id"])
                 for sample in detailed
                 if sample.get("benchmark") == benchmark
-                and sample.get("variant") in {entry["model"] for entry in pool}
+                and sample.get("variant") in pool_models
+                and sample.get("score") in {"0", "1"}
             }
         )
-        denominator = n_planned or len(sample_ids)
+        denominator = len(sample_ids)
 
         best = sorted(
             pool,
@@ -767,7 +916,10 @@ def compute_baselines(report: list[dict], detailed: list[dict]) -> dict[str, dic
         result[benchmark] = {
             "benchmark_label": BENCHMARK_LABELS.get(benchmark, benchmark),
             "pool": [entry["model"] for entry in pool],
-            "n_planned": denominator,
+            "n_planned": n_planned,
+            # The denominator the Oracle / Random shares below are computed on: planned samples
+            # minus the ones no pool model ever scored.
+            "n_evaluable": denominator,
             "best_single": {
                 "model": best["model"],
                 **_baseline_entry(variant_label(best["model"]), best["accuracy"], best["cost"]),
@@ -834,6 +986,10 @@ PALETTE = {
         "fusion": "#2a78d6",
         "fixed": "#eb6834",
         "border": "rgba(11,11,11,0.10)",
+        # Loss flag: a warm amber that stays legible on the light surface and does not collide
+        # with either series color (the fixed-model orange is reserved for data marks).
+        "warn": "#9a5b00",
+        "warn_bg": "rgba(154,91,0,0.08)",
     },
     "dark": {
         "page": "#0d0d0d",
@@ -846,6 +1002,8 @@ PALETTE = {
         "fusion": "#3987e5",
         "fixed": "#d95926",
         "border": "rgba(255,255,255,0.10)",
+        "warn": "#e0a44a",
+        "warn_bg": "rgba(224,164,74,0.12)",
     },
 }
 
@@ -855,12 +1013,14 @@ CSS = """
   --page: %(l_page)s; --surface: %(l_surface)s; --text-primary: %(l_primary)s;
   --text-secondary: %(l_secondary)s; --muted: %(l_muted)s; --grid: %(l_grid)s;
   --axis: %(l_axis)s; --fusion: %(l_fusion)s; --fixed: %(l_fixed)s; --border: %(l_border)s;
+  --warn: %(l_warn)s; --warn-bg: %(l_warn_bg)s;
 }
 @media (prefers-color-scheme: dark) {
   .viz-root {
     --page: %(d_page)s; --surface: %(d_surface)s; --text-primary: %(d_primary)s;
     --text-secondary: %(d_secondary)s; --muted: %(d_muted)s; --grid: %(d_grid)s;
     --axis: %(d_axis)s; --fusion: %(d_fusion)s; --fixed: %(d_fixed)s; --border: %(d_border)s;
+    --warn: %(d_warn)s; --warn-bg: %(d_warn_bg)s;
   }
 }
 body { margin: 0; background: var(--page); }
@@ -884,6 +1044,18 @@ th:first-child, td:first-child { text-align: left; }
 th { color: var(--text-secondary); font-weight: 600; }
 td { font-variant-numeric: tabular-nums; }
 tr.fusion td:first-child { font-weight: 600; }
+/* Loss flag: a tinted row plus a text badge, so the warning survives greyscale printing and
+   never rests on color alone. */
+tr.lossy { background: var(--warn-bg); }
+td.lossy-cell { color: var(--warn); font-weight: 600; }
+/* Output cap that differs from the smallest one in the same benchmark. Underlined as well as
+   coloured so the "this cell is not on the same footing" signal survives greyscale printing. */
+td.wider-cap { color: var(--warn); font-weight: 600; text-decoration: underline dotted; }
+.badge {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: var(--warn); border: 1px solid var(--warn);
+  background: var(--surface); vertical-align: 1px;
+}
 .swatch {
   display: inline-block; width: 10px; height: 10px; border-radius: 50%%; margin-right: 6px;
 }
@@ -1060,6 +1232,11 @@ LEGEND_GLYPHS = {
     'stroke-dasharray="5 4" stroke-linecap="round"/></svg>',
     "best": '<svg width="16" height="16" viewBox="-9 -9 18 18" style="vertical-align:-3px">'
     '<circle r="7.5" fill="none" stroke="var(--text-secondary)" stroke-width="1.5"/></svg>',
+    # Loss flag: same dashed halo the scatter draws around a point whose group lost too many
+    # samples, so the legend entry and the mark are literally the same shape.
+    "lossy": '<svg width="18" height="18" viewBox="-10 -10 20 20" style="vertical-align:-4px">'
+    '<circle r="8" fill="none" stroke="var(--warn)" stroke-width="1.5" '
+    'stroke-dasharray="3 3"/></svg>',
 }
 
 
@@ -1168,11 +1345,13 @@ def scatter_svg(rows: list[dict], baseline: dict | None = None) -> str:
         y = y_axis.to_pixel(_number(row["accuracy"]))
         y_low = y_axis.to_pixel(_number(row["wilson_low"]) or 0.0)
         y_high = y_axis.to_pixel(_number(row["wilson_high"]) or 0.0)
+        lossy = is_lossy(row)
         tip = (
             f"{variant_label(row['model'])}｜准确率 {fmt_pct(row['accuracy'])}"
-            f"（{row['n_correct']}/{row['n_planned']}）"
+            f"（{row['n_correct']}/{row['n_scored']}）"
             f"｜每题 {fmt_money(row['cost_usd_per_sample'])}"
             f"｜p50 {fmt(row['latency_p50_s'], 1, ' 秒')}"
+            f"｜损耗 {fmt_pct(row['error_rate'])}（{row['n_planned']} 题计划）"
         )
         parts.append(f"<g><title>{esc(tip)}</title>")
         parts.append(
@@ -1196,6 +1375,14 @@ def scatter_svg(rows: list[dict], baseline: dict | None = None) -> str:
                 f'stroke="var(--text-secondary)" stroke-width="1.5"/>'
             )
             label = f"{label}（BestSingle）"
+        if lossy:
+            # Dashed halo + a loss share in the label: this point is computed on far fewer
+            # samples than planned, so it should not be read as comparable to the clean ones.
+            parts.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="13" fill="none" stroke="var(--warn)" '
+                f'stroke-width="1.5" stroke-dasharray="3 3"/>'
+            )
+            label = f"{label}（损耗 {fmt_pct(row['error_rate'])}）"
         parts.append("</g>")
         point_meta.append({"x": x, "y": y, "label": label})
 
@@ -1317,17 +1504,62 @@ def latency_svg(rows: list[dict]) -> str:
     return "".join(parts)
 
 
+ERROR_KIND_LABELS = {
+    "connection": "连接被切",
+    "upstream": "上游返回失败",
+    "scorer": "评分器失败",
+    "missing": "日志里没有该题",
+    "other": "其他",
+}
+
+
+def is_lossy(row: dict) -> bool:
+    """True when this cell lost more than `LOSSY_ERROR_RATE` of its planned samples."""
+    rate = _number(row.get("error_rate"))
+    return rate is not None and rate > LOSSY_ERROR_RATE
+
+
+def _error_tooltip(row: dict) -> str:
+    """Hover text on the loss cell: how many samples went missing and in what shape."""
+    raw = row.get("error_kinds") or ""
+    kinds = json.loads(raw) if raw else {}
+    if not kinds:
+        return "本组没有损耗，准确率分母等于计划题数。"
+    detail = "、".join(
+        f"{ERROR_KIND_LABELS.get(kind, kind)} {count} 题" for kind, count in sorted(kinds.items())
+    )
+    return (
+        f"计划 {row['n_planned']} 题，成功评分 {row['n_scored']} 题；"
+        f"损耗构成：{detail}。这些题不计入准确率的分子和分母。"
+    )
+
+
+def _wider_cap(row: dict, group: list[dict]) -> bool:
+    """True when this row ran with a larger output cap than the smallest one in its benchmark.
+
+    Used only to highlight the cell. The comparison is against the group minimum rather than a
+    hardcoded number so that it keeps working if the caps in scripts/run_calibration.sh change.
+    """
+    caps = [int(r["max_tokens"]) for r in group if str(r.get("max_tokens") or "").isdigit()]
+    if not caps or not str(row.get("max_tokens") or "").isdigit():
+        return False
+    return int(row["max_tokens"]) > min(caps)
+
+
 def _table(rows: list[dict]) -> str:
     head = [
         "变体",
+        "输出上限",
         "准确率",
         "95% 区间",
+        "计划题数",
+        "出错题数",
+        "损耗率",
         "总成本",
         "每题成本",
         "每答对成本",
         "中位耗时",
         "p95 耗时",
-        "出错题数",
     ]
     parts = ["<table><thead><tr>"]
     parts += [f"<th>{esc(column)}</th>" for column in head]
@@ -1339,18 +1571,41 @@ def _table(rows: list[dict]) -> str:
             if fusion
             else '<span class="swatch fixed"></span>'
         )
-        parts.append(f'<tr class="{"fusion" if fusion else "fixed"}">')
-        parts.append(f"<td>{swatch}{esc(variant_label(row['model']))}</td>")
-        parts.append(
-            f"<td>{fmt_pct(row['accuracy'])}（{row['n_correct']}/{row['n_planned']}）</td>"
+        lossy = is_lossy(row)
+        classes = " ".join(
+            filter(None, ["fusion" if fusion else "fixed", "lossy" if lossy else ""])
         )
+        parts.append(f'<tr class="{classes}">')
+        # The low-confidence badge rides the variant name, so the warning travels with the row
+        # even when the table is read on a narrow screen and the loss column scrolls out of view.
+        badge = (
+            '<span class="badge" title="损耗超过 5%，本组结论可信度低">损耗高</span>'
+            if lossy
+            else ""
+        )
+        parts.append(f"<td>{swatch}{esc(variant_label(row['model']))}{badge}</td>")
+        # max_tokens is per-row because the matrix is no longer uniform: the Fusion routes run
+        # GPQA and LCB at a wider cap than the fixed models. Reading the cost or the p95 of two
+        # rows against each other without seeing this column would be misleading.
+        cap = row.get("max_tokens") or ""
+        cap_cell = f"{int(cap):,}" if str(cap).isdigit() else "—"
+        cap_class = ' class="wider-cap"' if _wider_cap(row, rows) else ""
+        parts.append(f"<td{cap_class}>{esc(cap_cell)}</td>")
+        # Denominator is the scored count, not the planned count: errored samples never produced
+        # an answer, so they are neither right nor wrong.
+        parts.append(f"<td>{fmt_pct(row['accuracy'])}（{row['n_correct']}/{row['n_scored']}）</td>")
         parts.append(f"<td>{fmt_pct(row['wilson_low'])}–{fmt_pct(row['wilson_high'])}</td>")
+        parts.append(f"<td>{esc(row['n_planned'])}</td>")
+        parts.append(f"<td>{esc(row['n_error'])}</td>")
+        cell_class = ' class="lossy-cell"' if lossy else ""
+        parts.append(
+            f'<td{cell_class} title="{esc(_error_tooltip(row))}">{fmt_pct(row["error_rate"])}</td>'
+        )
         parts.append(f"<td>{fmt_money(row['cost_usd_settled'], 4)}</td>")
         parts.append(f"<td>{fmt_money(row['cost_usd_per_sample'], 4)}</td>")
         parts.append(f"<td>{fmt_money(row['cost_per_correct_usd'], 4)}</td>")
         parts.append(f"<td>{fmt(row['latency_p50_s'], 1)}</td>")
         parts.append(f"<td>{fmt(row['latency_p95_s'], 1)}</td>")
-        parts.append(f"<td>{row['n_error']}</td>")
         parts.append("</tr>")
     parts.append("</tbody></table>")
     return "".join(parts)
@@ -1499,7 +1754,8 @@ def _baseline_section(baselines: dict[str, dict]) -> list[str]:
         "Random 是逐题在固定模型里均匀随机挑一个。</p>",
         '<p class="note">路由器至少要压过随机混合线，才谈得上会选模型。</p>',
         '<p class="note">候选池只含固定模型（Fusion 变体不作自己的基线）；'
-        "出错和无分的题一律算答错，分母仍是计划题数。"
+        "出错的题（连接被切、上游失败、评分器崩）没有答案，不计入任何一方的分子分母，"
+        "Oracle / Random 的分母是「至少有一个固定模型评出分」的题数。"
         f"{esc(COST_FALLBACK_NOTE)}</p>",
     ]
     for benchmark in sorted(baselines, key=lambda name: _sort_key((name, ""))):
@@ -1511,6 +1767,8 @@ def _baseline_section(baselines: dict[str, dict]) -> list[str]:
             f"{fmt_pct(block['oracle'].get('routable_share'))}</b>"
             "｜无人答对占比 <b>"
             f"{fmt_pct(block['oracle'].get('unsolved_share'))}</b>"
+            f"｜可评测题数 <b>{esc(block.get('n_evaluable', ''))}</b>"
+            f" / 计划 <b>{esc(block.get('n_planned', ''))}</b>"
             f"｜回退到运行平均成本的逐题记录 <b>{esc(fallback)}</b> 条</p>"
         )
         parts.append('<p class="note">可路由题越少，这套题越看不出路由能力。</p>')
@@ -1540,13 +1798,26 @@ def render_html(rows: list[dict], meta: dict, baselines: dict[str, dict] | None 
         "（赛道 × 变体）组合</p>",
         '<p class="note">这是校准跑的数据，只用来检查流程、成本口径和耗时，不能当作模型排名；'
         "每格样本量很小，差异只作描述，不作结论。</p>",
+        '<p class="note">计分口径：准确率的分母是<b>成功评分的题数</b>。因连接被切、上游返回失败或'
+        "评分器崩溃而没有答案的题，既不算答对也不算答错，一律从分子分母里剔除——这些是基础设施故障，"
+        "不是模型的能力。每组单独列出计划题数、出错题数和损耗率；"
+        f"损耗超过 {LOSSY_ERROR_RATE:.0%} 的组标为「损耗高」，其准确率只建立在剩下的题上，"
+        "可信度低，不要和跑干净的组直接比。</p>",
+        '<p class="note">口径不对称，必须先看：GPQA 与 LiveCodeBench 上，三个 Fusion 路由的'
+        "输出上限是 32768 tokens，五个固定模型仍是 16384（IFEval 两边都是 8192）。原因是 16384 会"
+        "在推理中途截断 Fusion，正文返回空，网关记为 lyra_execution_failed；把上限放宽到 32768 后，"
+        "在 lyra-auto 原先失败的 12 道 GPQA 题上有 7 道恢复出可评分的答案。再往上放没有意义："
+        "上游单次尝试另有约 297 秒的硬期限，65536 的失败时刻和 32768 完全一样。"
+        "代价是这两个赛道的 Fusion 格子和固定模型格子<b>在成本和耗时长尾上不可直接比较</b>，"
+        "准确率也是在更宽的预算下取得的。下面每张表都有「输出上限」一列，放宽过的格子标了下划线。</p>",
         '<div class="legend">'
         '<span><span class="swatch fusion"></span>Fusion 路由（实心）</span>'
         '<span><span class="swatch fixed"></span>固定模型（空心）</span>'
         f"<span>{LEGEND_GLYPHS['best']} BestSingle</span>"
         f"<span>{LEGEND_GLYPHS['oracle']} Oracle（理论上界）</span>"
         f"<span>{LEGEND_GLYPHS['random']} 随机（均匀）</span>"
-        f"<span>{LEGEND_GLYPHS['mix']} 随机混合线</span></div>",
+        f"<span>{LEGEND_GLYPHS['mix']} 随机混合线</span>"
+        f"<span>{LEGEND_GLYPHS['lossy']} 损耗 &gt;{LOSSY_ERROR_RATE:.0%}（可信度低）</span></div>",
     ]
     baselines = baselines or {}
 
@@ -1556,7 +1827,11 @@ def render_html(rows: list[dict], meta: dict, baselines: dict[str, dict] | None 
         parts.append(f"<h2>{esc(label)}</h2>")
         parts.append('<section class="card">')
         parts.append("<h3>越靠左上越好：便宜且答得准</h3>")
-        parts.append('<p class="note">竖线是 95% 置信区间，n=10 时区间很宽，属正常。</p>')
+        parts.append(
+            '<p class="note">竖线是 95% Wilson 置信区间，按成功评分的题数算，'
+            "所以损耗大的组区间更宽——这正是它证据更少的意思。虚线圈出的点损耗超过 "
+            f"{LOSSY_ERROR_RATE:.0%}。</p>"
+        )
         parts.append(scatter_svg(group, baselines.get(benchmark)))
         parts.append(_table(group))
         price_table = _price_table(group)
@@ -1574,8 +1849,8 @@ def render_html(rows: list[dict], meta: dict, baselines: dict[str, dict] | None 
     parts.append("<h2>耗时对比</h2>")
     parts.append(
         '<p class="note">实心点是中位耗时，空心点是 p95（最慢的那几题）。'
-        "耗时只统计正常完成的题；本次有若干题在 600 秒的客户端超时上断开连接，"
-        "它们记为出错，计入准确率分母但不计入耗时。</p>"
+        "耗时只统计正常完成的题；连接被中断的题记为出错，"
+        "既不计入耗时，也不计入准确率。</p>"
     )
     for benchmark in sorted(benchmarks, key=lambda name: _sort_key((name, ""))):
         group = benchmarks[benchmark]
@@ -1621,6 +1896,14 @@ def render_html(rows: list[dict], meta: dict, baselines: dict[str, dict] | None 
     parts.append(
         '<p class="note">成本口径：平台按模型 + 运行时间窗归集，Fusion 路由是独立账单行，'
         "已含其内部调用；逐题成本按请求时长近似匹配，匹配不上的留空，不写 0。</p>"
+    )
+    parts.append(
+        '<p class="note">表里的「每题成本」= 该 run 的结算总额 ÷ 成功评分题数，和准确率同分母，'
+        "读作「拿到一个可用答案花了多少钱」。分子<b>保留</b>为失败请求付掉的钱："
+        "Lyra 在流内返回 lyra_execution_failed 时外层仍是 HTTP 200，平台照常计费；"
+        "而连接被中断的请求不结算，本身就是 0 美元。所以损耗大的组每题成本偏高，"
+        "这是真实花掉的钱，不是口径错误。report.csv 里另有一列 "
+        "<b>cost_usd_per_planned_sample</b>（结算总额 ÷ 计划题数），即旧口径，供对照。</p>"
     )
     parts.append("</div></body></html>")
     return "".join(parts)

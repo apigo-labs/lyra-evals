@@ -146,6 +146,12 @@ make inspect-summary ARGS="--csv .local/inspect-summary.csv"
 `.local/inspect-logs`。汇总脚本导出逐题用量、耗时、响应 id 与 Lyra 路由字段（路由到的模型、难度、任务类型）。Lyra 的
 usage 含内部路由开销，输出上限只是预留边界；账单以 execution id 对账为准。`scripts/probe_lyra_protocols.py` 可在冻结计划前用最小请求确认任意模型的协议。
 
+输出上限在矩阵里不是一个值：`scripts/run_calibration.sh` 的 TASKS 表给固定模型保留设计 §4 的 8192/16384/16384，
+只在 GPQA 与 LiveCodeBench 上把三个 `apigo/lyra-*` 路由放宽到 32768。16384 会在推理途中截断 Fusion，正文为空、
+网关记 `lyra_execution_failed`；放宽后原先失败的 12 道 GPQA 题恢复 7 道。再高没有用，上游单次尝试约 297 秒就到期，
+65536 的失败时刻与 32768 相同。该表脚注和 `scripts/inspect_report.py` 生成的报告都把这一列显式列出并标注，
+因为这两个赛道的 Fusion 与固定模型格子在成本和耗时长尾上不能直接比较。
+
 LiveCodeBench release_v6 不在 inspect_evals 中，由仓库内的 `inspect_tasks/livecodebench_v6.py` 薄包装接入：题目来自
 `.local/suites/livecodebench` 冻结题库（任务 metadata 记录 pack sha256），提示词与 ACP 路径同源，评分仍是既有断网 Docker
 grader，单轮生成、无工具、无重试。运行前需 `make benchmark-lcb-image` 并保证 Docker 可用；grader 本身失败（Docker 缺失、
@@ -178,5 +184,19 @@ Fusion 变体不作自己的基线。`report.json` 里每个赛道多一个 `bas
 成本口径：Platform 把每个 Gateway 请求记为独立账单行，`apigo/lyra-*` 路由本身就是一条账单行并已含其内部调用，
 不需要再求和；Inspect 日志里没有 Gateway 请求 id，因此按「模型 + 运行时间窗」归集——模型等于该变体、时间落在
 [run started, run completed + 5 秒] 的账单行计入该 run，其他模型（含被路由到的子模型）一律排除。逐题成本只能按
-请求时长近似匹配，匹配不上的留空，不写 0；缺少账单导出时所有成本列同样留空。准确率分母是计划题数，错误题留在
-分母内。固定模型额外给出按公开价（`.local/acceptance/ifeval-prices.json`）的估算值以便对照，Lyra 无公开价。
+请求时长近似匹配，匹配不上的留空，不写 0；缺少账单导出时所有成本列同样留空。固定模型额外给出按公开价
+（`.local/acceptance/ifeval-prices.json`）的估算值以便对照，Lyra 无公开价。
+
+计分口径：准确率 = `n_correct / n_scored`，分母是**成功评分的题数**。样本级错误（`RetryError(APIConnectionError)` /
+`RemoteProtocolError` —— 连接被对端中断，成因未定；`RetryError(InternalServerError)` / `lyra_execution_failed` —— Lyra 在 SSE 流内返回失败但外层是
+HTTP 200；`Official LCB grader failed` —— 本地评分器崩）都没有产生答案，是基础设施/评分器故障而非模型答错，因此从
+分子和分母里一并剔除，Wilson 95% 区间同样按 `n_scored` 计算。损耗单独成列：`n_planned`、`n_error`、`n_missing`
+（日志里完全没有该题，跑批中断留下的）、`error_rate = (n_planned - n_scored) / n_planned`，以及 `error_kinds`
+（`connection` / `upstream` / `scorer` / `missing` / `other` 的计数）。HTML 里损耗率超过 `LOSSY_ERROR_RATE`（5%）的组
+会标上「损耗高」徽标、行底色和散点虚线圈，提示该组结论可信度低。路由基线同口径：Oracle / Random 的分母是「至少有
+一个固定模型评出分」的题数（`baselines[*].n_evaluable`），全员都失败的题整题移出分母。
+
+成本分母：`cost_usd_per_sample` = 该 run 的结算总额 ÷ `n_scored`，与准确率同分母，读作「拿到一个可用答案花了多少
+钱」。分子**保留**为失败请求付掉的钱——`lyra_execution_failed` 平台照常计费，连接被中断的请求不结算、本身就是
+0 美元——所以损耗大的组每题成本偏高，这是真实花掉的钱。旧口径（结算总额 ÷ 计划题数）保留为 `report.csv` 的
+`cost_usd_per_planned_sample` 列，便于对照，不静默改变原列含义。

@@ -79,12 +79,14 @@ def run(
     n_planned=2,
     started="2026-09-12T13:00:00+00:00",
     completed="2026-09-12T13:02:00+00:00",
+    max_tokens=16384,
 ):
     return {
         "log": "x.eval",
         "task": task,
         "model": model,
         "effort": "high",
+        "max_tokens": max_tokens,
         "started": started,
         "completed": completed,
         "n_planned": n_planned,
@@ -149,11 +151,17 @@ def test_per_sample_cost_left_empty_when_duration_is_far_off():
 # --------------------------------------------------------------------------- statistics
 
 
-def test_accuracy_keeps_errors_in_the_denominator():
+def test_accuracy_excludes_errors_from_both_numerator_and_denominator():
+    """A connection cut is an infrastructure fault, not the model answering wrongly."""
     rows = [
         sample_row("ifeval", "openai-api/apigo/gpt-6-astra", "a", "1", 5.0),
         sample_row(
-            "ifeval", "openai-api/apigo/gpt-6-astra", "b", "", 600.0, error="RetryError(...)"
+            "ifeval",
+            "openai-api/apigo/gpt-6-astra",
+            "b",
+            "",
+            730.0,
+            error="RetryError(<Future at 0x1 state=finished raised APIConnectionError>)",
         ),
     ]
     report, _ = inspect_report.build_rows(rows, [run("ifeval", "gpt-6-astra")], [], {})
@@ -161,9 +169,104 @@ def test_accuracy_keeps_errors_in_the_denominator():
     assert entry["n_planned"] == 2
     assert entry["n_scored"] == 1
     assert entry["n_error"] == 1
-    assert entry["accuracy"] == pytest.approx(0.5)
-    # The 600s timeout sample is excluded from latency but not from accuracy.
+    assert entry["n_missing"] == 0
+    # 1/1, not 1/2: the cut sample never produced an answer to judge.
+    assert entry["accuracy"] == pytest.approx(1.0)
+    assert entry["error_rate"] == pytest.approx(0.5)
+    assert json.loads(entry["error_kinds"]) == {"connection": 1}
+    # The Wilson interval is on n_scored=1, so it is the full width of a single observation.
+    assert entry["wilson_low"] == pytest.approx(inspect_report.wilson_interval(1, 1)[0], abs=1e-4)
+    # The 730s timeout sample is excluded from latency as before.
     assert entry["latency_p95_s"] == pytest.approx(5.0)
+
+
+def test_error_kinds_split_connection_upstream_and_scorer_faults():
+    assert inspect_report.classify_error("RetryError(... raised APIConnectionError>)") == (
+        "connection"
+    )
+    assert (
+        inspect_report.classify_error("RetryError(... raised InternalServerError>)") == "upstream"
+    )
+    assert inspect_report.classify_error("Lyra execution failed") == "upstream"
+    assert inspect_report.classify_error("RuntimeError('Official LCB grader failed')") == "scorer"
+    assert inspect_report.classify_error("something else entirely") == "other"
+
+
+def test_samples_absent_from_the_log_count_as_loss_not_as_wrong_answers():
+    """An aborted run leaves planned samples with no row at all; that is loss, not a 0."""
+    rows = [sample_row("ifeval", "openai-api/apigo/gpt-6-astra", "a", "1", 5.0)]
+    report, _ = inspect_report.build_rows(rows, [run("ifeval", "gpt-6-astra", n_planned=4)], [], {})
+    (entry,) = report
+    assert entry["n_planned"] == 4
+    assert entry["n_scored"] == 1
+    assert entry["n_error"] == 0
+    assert entry["n_missing"] == 3
+    assert entry["accuracy"] == pytest.approx(1.0)
+    assert entry["error_rate"] == pytest.approx(0.75)
+    assert json.loads(entry["error_kinds"]) == {"missing": 3}
+
+
+def test_cost_per_sample_uses_the_scored_denominator_and_keeps_the_old_column():
+    """Money burned on a failed attempt stays in the numerator; only the denominator changes."""
+    rows = [
+        sample_row("ifeval", "openai-api/apigo/gpt-6-astra", "a", "1", 5.0),
+        sample_row("ifeval", "openai-api/apigo/gpt-6-astra", "b", "0", 6.0),
+        sample_row(
+            "ifeval",
+            "openai-api/apigo/gpt-6-astra",
+            "c",
+            "",
+            730.0,
+            error="RetryError(<Future at 0x1 state=finished raised InternalServerError>)",
+        ),
+    ]
+    # Three billed line items: the failed sample was billed as usual (HTTP 200 + in-stream error).
+    entries = [
+        billing("gpt-6-astra", 0, 0.01, 5000),
+        billing("gpt-6-astra", 1, 0.02, 6000),
+        billing("gpt-6-astra", 2, 0.03, 730000),
+    ]
+    report, _ = inspect_report.build_rows(
+        rows, [run("ifeval", "gpt-6-astra", n_planned=3)], entries, {}
+    )
+    (entry,) = report
+    assert entry["cost_usd_settled"] == pytest.approx(0.06)
+    # $0.06 over the 2 usable answers, wasted spend included.
+    assert entry["cost_usd_per_sample"] == pytest.approx(0.03)
+    # The previous meaning stays available side by side rather than changing under the same name.
+    assert entry["cost_usd_per_planned_sample"] == pytest.approx(0.02)
+
+
+def test_lossy_groups_are_flagged_in_the_html_table():
+    rows = [
+        sample_row("ifeval", "openai-api/apigo/gpt-6-astra", f"s{i}", "1", 5.0) for i in range(9)
+    ]
+    rows.append(
+        sample_row(
+            "ifeval",
+            "openai-api/apigo/gpt-6-astra",
+            "s9",
+            "",
+            730.0,
+            error="RetryError(<Future at 0x1 state=finished raised APIConnectionError>)",
+        )
+    )
+    report, _ = inspect_report.build_rows(
+        rows, [run("ifeval", "gpt-6-astra", n_planned=10)], [], {}
+    )
+    (entry,) = report
+    assert inspect_report.is_lossy(entry) is True  # 10% > 5%
+    table = inspect_report._table(report)
+    assert "损耗高" in table and "lossy" in table
+    assert "连接被切 1 题" in table
+    clean = [
+        sample_row("ifeval", "openai-api/apigo/gpt-6-astra", f"s{i}", "1", 5.0) for i in range(10)
+    ]
+    clean_report, _ = inspect_report.build_rows(
+        clean, [run("ifeval", "gpt-6-astra", n_planned=10)], [], {}
+    )
+    assert inspect_report.is_lossy(clean_report[0]) is False
+    assert "损耗高" not in inspect_report._table(clean_report)
 
 
 def test_wilson_bounds_bracket_the_point_estimate():
@@ -395,7 +498,7 @@ def test_header_to_run_reads_the_inspect_header_shape():
         "eval": {
             "task": "inspect_evals/gpqa_diamond",
             "model": "openai-api/apigo/apigo/lyra-auto",
-            "model_generate_config": {"reasoning_effort": "high"},
+            "model_generate_config": {"reasoning_effort": "high", "max_tokens": 32768},
             "dataset": {"samples": 198, "sample_ids": [1, 2, 3]},
         },
         "stats": {
@@ -408,6 +511,47 @@ def test_header_to_run_reads_the_inspect_header_shape():
     assert parsed["model"] == "apigo/lyra-auto"
     assert parsed["n_planned"] == 3
     assert parsed["wall_time_s"] == pytest.approx(88.0)
+    assert parsed["max_tokens"] == 32768
+
+
+def test_a_wider_output_cap_is_shown_and_flagged_in_the_html_table():
+    """The Fusion routes run GPQA/LCB at 32768 while the fixed models stay at 16384.
+
+    The report must not let that difference pass unseen: both caps appear as their own column,
+    and only the wider one is marked, so a reader comparing the cost or p95 of the two rows can
+    see they are not on the same footing.
+    """
+    rows = [
+        sample_row("gpqa_diamond", f"openai-api/apigo/{model}", f"s{i}", "1", 5.0)
+        for model in ("gpt-6-astra", "apigo/lyra-auto")
+        for i in range(2)
+    ]
+    runs = [
+        run("gpqa_diamond", "gpt-6-astra", max_tokens=16384),
+        run("gpqa_diamond", "apigo/lyra-auto", max_tokens=32768),
+    ]
+    report, _ = inspect_report.build_rows(rows, runs, [], {})
+    assert [entry["max_tokens"] for entry in report] == [16384, 32768]
+
+    table = inspect_report._table(report)
+    assert "输出上限" in table
+    assert "16,384" in table and "32,768" in table
+    # Exactly one cell carries the flag: the one above the benchmark's smallest cap.
+    assert table.count('class="wider-cap"') == 1
+    assert not inspect_report._wider_cap(report[0], report)
+    assert inspect_report._wider_cap(report[1], report)
+
+    # A uniform matrix must not be flagged at all, so the marker keeps meaning something.
+    uniform, _ = inspect_report.build_rows(
+        rows,
+        [
+            run("gpqa_diamond", model, max_tokens=16384)
+            for model in ("gpt-6-astra", "apigo/lyra-auto")
+        ],
+        [],
+        {},
+    )
+    assert 'class="wider-cap"' not in inspect_report._table(uniform)
 
 
 # --------------------------------------------------------------------------- router baselines
@@ -484,6 +628,36 @@ def test_oracle_picks_the_cheapest_correct_model_and_counts_unsolved_samples():
     # s2 and s3: the cheapest model failed but another one succeeded.
     assert oracle["routable_share"] == pytest.approx(0.5)
     assert oracle["unsolved_share"] == pytest.approx(0.25)
+
+
+def test_oracle_denominator_drops_samples_no_pool_model_could_score():
+    """A sample every model lost to a connection cut carries no evidence about routing."""
+    rows, runs, entries, _ = _baseline_fixture()
+    # s4 (the one nobody solved) is turned into an infrastructure failure for every model.
+    rows = [
+        sample_row(
+            row["task"],
+            row["model"],
+            row["sample_id"],
+            "",
+            730.0,
+            error="RetryError(<Future at 0x1 state=finished raised APIConnectionError>)",
+        )
+        if row["sample_id"] == "s4"
+        else row
+        for row in rows
+    ]
+    baselines, report, _ = _baselines_for(rows, runs, entries)
+    block = baselines["ifeval"]
+    assert block["n_planned"] == 4
+    assert block["n_evaluable"] == 3  # s4 left the denominator entirely
+    # `pricey` answered 3 of the 3 evaluable samples.
+    assert block["best_single"]["accuracy"] == pytest.approx(1.0)
+    assert block["oracle"]["accuracy"] == pytest.approx(1.0)
+    assert block["oracle"]["unsolved_share"] == pytest.approx(0.0)
+    # And the same denominator shows up in the per-variant row, not the planned 4.
+    pricey = next(row for row in report if row["model"] == "pricey")
+    assert pricey["n_scored"] == 3 and pricey["accuracy"] == pytest.approx(1.0)
 
 
 def test_random_uniform_averages_accuracy_and_cost_over_the_fixed_pool():
