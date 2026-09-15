@@ -19,6 +19,9 @@
 #
 # Credentials come from .env (VOHU_EVALS_API_KEY / VOHU_EVALS_GATEWAY_BASE_URL); nothing
 # is printed. Logs go to .local/inspect-logs (git-ignored) unless INSPECT_LOG_DIR is set.
+#
+# Requests are streamed by default (-M stream=true). See the STREAMING block below for why
+# and for how to turn it off (INSPECT_STREAM=false).
 set -euo pipefail
 
 INSPECT_AI_VERSION="${INSPECT_AI_VERSION:-0.3.263}"
@@ -67,6 +70,47 @@ if [[ "$TASK" == inspect_tasks/* ]]; then
   export PYTHONPATH="$ROOT/src:$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 fi
 
+# STREAMING — on by default.
+#
+# The reason is diagnostic, not a timeout workaround. Non-streamed runs reported failures as
+# bare APIConnectionError, which reads like a network fault and hides what actually went
+# wrong; the same samples run streamed report `lyra_execution_failed` from the SSE body, and
+# that pointed at the real cause (the output budget being spent entirely on reasoning tokens,
+# leaving no answer — see the TASKS table in run_calibration.sh). Error counts barely moved
+# when streaming was turned on; what changed is that the failures became legible.
+#
+# What streaming does NOT do, despite an earlier theory in this repo's notes: it does not
+# defeat a connection idle timeout, because there is no idle timeout to defeat. The gateway
+# emits an SSE heartbeat every 15.0s (measured on raw bytes), so a connection carrying a long
+# reasoning turn is never idle in the first place. The failures that cluster at 730-733s
+# (livecodebench x claude-sonnet-5, effort=high) reproduce identically with streaming on,
+# heartbeats flowing, and a 3600s client timeout — cause still unknown, tracked upstream.
+#
+# One caveat worth knowing when reading logs: reasoning models emit nothing while they think,
+# so time-to-first-chunk can be far out (gpt-6-astra at effort=high: 50.4s) and some Lyra
+# routes buffer the whole answer into a handful of chunks. A quiet stream is not a stalled one.
+#
+# Inspect's openai-api provider (OpenAICompatibleAPI) defaults to non-streaming:
+# should_stream() returns False and we pass no on_stream callback, so resolve_stream() only
+# streams when the `stream` model arg is set explicitly. Hence -M stream=true.
+#
+# Overrides:
+#   INSPECT_STREAM=false scripts/inspect_eval.sh ...     # force non-streaming
+#   scripts/inspect_eval.sh <task> <model> -M stream=false   # same, per-invocation
+# The caller's own -M stream=... wins and suppresses the injection below. That check is
+# belt-and-braces rather than load-bearing: parse_cli_args() folds -M into a dict in
+# argument order, so a later -M stream=... simply overwrites an earlier one (verified by
+# running with both -M stream=true -M stream=false: no error, the logged request carried no
+# "stream" field). Skipping the injection just keeps the recorded model_args clean.
+# (Expanded below as ${STREAM_ARGS[@]+"..."}: under `set -u` the stock macOS bash 3.2 treats
+# an empty array as unset and would abort on a plain "${STREAM_ARGS[@]}".)
+STREAM_ARGS=(-M "stream=${INSPECT_STREAM:-true}")
+for _arg in "$@"; do
+  case "$_arg" in
+    stream=*|-Mstream=*|--model-arg=stream=*) STREAM_ARGS=() ;;
+  esac
+done
+
 exec uvx --from "inspect-ai==$INSPECT_AI_VERSION" \
   --with "inspect-evals==$INSPECT_EVALS_VERSION" \
   --with openai \
@@ -76,4 +120,5 @@ exec uvx --from "inspect-ai==$INSPECT_AI_VERSION" \
   --epochs 1 \
   --log-dir "$LOG_DIR" \
   --display plain \
+  ${STREAM_ARGS[@]+"${STREAM_ARGS[@]}"} \
   "$@"
