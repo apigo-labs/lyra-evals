@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fusion 路演评测结果（2026-09）· 成本 / 效率 / 正确率</title>
+<style>
+:root{
+  --paper:#faf9f5; --panel:#fcfcfb; --ink:#14130f; --ink2:#52514e; --muted:#898781;
+  --rule:#deddd4; --rule2:#c3c2b7;
+  --f1:#5598e7; --f2:#256abf; --f3:#0d366b;      /* Fusion auto / budget / quality */
+  --fixed:#898781;                                /* 固定模型统一中性灰 */
+  --oracle:#4a4944; --random:#a9a7a0; --best:#6f6d66;
+  --flag:#b34a12;                                 /* 高损耗标记，非红绿语义 */
+  --sans:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --serif:Georgia,"Songti SC","Source Han Serif SC",serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.72;font-variant-numeric:tabular-nums;
+  background-image:linear-gradient(var(--paper),var(--paper));}
+.wrap{max-width:1100px;margin:0 auto;padding:0 28px 80px}
+.wrap.top{padding-bottom:0}
+a{color:var(--ink);text-underline-offset:3px;text-decoration-thickness:1px}
+h1,h2,h3{font-weight:600;letter-spacing:-.01em}
+code,.mono,th,td{font-family:var(--mono)}
+
+/* ---------- 顶部 ---------- */
+header.masthead{border-bottom:1px solid var(--ink);padding:44px 0 18px;margin-bottom:0}
+.kicker{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:14px}
+h1{font-family:var(--serif);font-size:clamp(28px,4.4vw,44px);line-height:1.15;margin:0 0 10px}
+.dek{color:var(--ink2);max-width:62ch;margin:0}
+
+/* 摘要条（sticky） */
+.specbar{position:sticky;top:0;z-index:30;background:var(--paper);
+  border-bottom:1px solid var(--ink);padding:9px 0;margin-bottom:34px}
+.specbar .inner{max-width:1100px;margin:0 auto;padding:0 28px;display:flex;flex-wrap:wrap;gap:0 26px;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink2);line-height:1.9}
+.specbar b{color:var(--ink);font-weight:600}
+.specbar span{white-space:nowrap}
+
+/* ---------- 段落骨架 ---------- */
+section{margin:0 0 56px}
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;
+  border-bottom:1px solid var(--ink);padding-bottom:6px;margin-bottom:18px}
+.sec-head h2{font-size:19px;margin:0}
+.sec-no{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--muted)}
+.sec-head .jump{font-family:var(--mono);font-size:11px;color:var(--ink2);white-space:nowrap}
+.note{color:var(--ink2);font-size:13.5px;max-width:82ch}
+.note.tight{margin:.4em 0}
+
+/* 三句话结论 */
+.claims{display:grid;gap:0;border:1px solid var(--ink);background:var(--panel)}
+.claim{padding:18px 22px;border-bottom:1px solid var(--rule)}
+.claim:last-child{border-bottom:0}
+.claim .t{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--muted);
+  text-transform:uppercase;margin-bottom:6px}
+.claim p{margin:0;font-size:16.5px;line-height:1.62}
+.claim .caveat{margin-top:7px;font-size:13px;color:var(--ink2);line-height:1.6}
+.hl{background:linear-gradient(transparent 62%,#e6eefa 62%);padding:0 1px}
+
+/* 图表网格 */
+.panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}
+@media (max-width:1000px){.panels{grid-template-columns:1fr}.panel{max-width:520px}}
+.panel{border:1px solid var(--rule2);background:var(--panel);padding:12px 12px 10px}
+.panel h3{font-size:13.5px;margin:0 0 2px}
+.panel .meta{font-family:var(--mono);font-size:10.5px;color:var(--ink2);line-height:1.55;
+  margin:0 0 8px;border-bottom:1px dotted var(--rule2);padding-bottom:6px}
+.panel svg{display:block;width:100%;height:auto;overflow:visible}
+
+/* 图例 */
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:14px 0 4px;font-size:12.5px;color:var(--ink2)}
+.legend .grp{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;border:1px solid var(--rule);
+  padding:5px 10px;cursor:pointer;background:var(--panel);user-select:none}
+.legend .grp[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.legend .grp .lbl{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin-right:2px}
+.legend .it{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.legend svg{width:16px;height:12px;overflow:visible}
+.legend .hint{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+
+/* 淡化状态 */
+.charts.dim-fixed .g-fixed{opacity:.16}
+.charts.dim-fusion .g-fusion{opacity:.16}
+
+/* 表格 */
+.tablewrap{overflow-x:auto;border:1px solid var(--rule2);background:var(--panel)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--rule);white-space:nowrap}
+th{font-weight:600;font-size:10.5px;letter-spacing:.06em;color:var(--ink2);
+  background:#f4f3ee;position:sticky;top:0;text-transform:none}
+td:first-child,th:first-child{text-align:left}
+tbody tr:hover{background:#f4f3ee}
+tr.is-fusion td:first-child{font-weight:600}
+tr.is-fusion td{background:#f2f6fc}
+tr.is-fusion:hover td{background:#e9f0fa}
+tr.sep td{border-top:1px solid var(--ink)}
+.tag{font-size:10px;border:1px solid var(--rule2);padding:0 4px;margin-left:5px;color:var(--ink2)}
+caption{caption-side:top;text-align:left;padding:9px 10px;font-size:12px;color:var(--ink2);
+  border-bottom:1px solid var(--rule2);background:#f4f3ee}
+td.warn{color:var(--flag)}
+
+/* 披露表 */
+table.disc td,table.disc th{white-space:normal;text-align:left;vertical-align:top}
+table.disc td:first-child{width:46px;font-family:var(--mono);color:var(--muted)}
+table.disc td:nth-child(2){width:150px;font-weight:600}
+table.disc tr:target td{background:#eef3fb;box-shadow:inset 3px 0 0 var(--f2)}
+
+details{border:1px solid var(--rule2);background:var(--panel);margin-top:14px}
+details>summary{cursor:pointer;padding:10px 14px;font-family:var(--mono);font-size:12px;
+  letter-spacing:.06em;color:var(--ink2);list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--muted)}
+details[open]>summary::before{content:"▾ "}
+details[open]>summary{border-bottom:1px solid var(--rule2)}
+details .tablewrap{border:0}
+
+/* tooltip */
+#tip{position:fixed;z-index:60;pointer-events:none;opacity:0;transition:opacity .08s;
+  background:var(--ink);color:#f7f6f1;padding:8px 10px;font-family:var(--mono);font-size:11px;
+  line-height:1.65;max-width:290px;box-shadow:0 6px 22px rgba(0,0,0,.22)}
+#tip b{color:#fff;font-weight:600}
+#tip .k{color:#b9b7ae}
+
+/* 页脚 */
+footer{border-top:1px solid var(--ink);padding-top:22px;font-size:13px;color:var(--ink2)}
+footer h2{font-size:16px;color:var(--ink);margin:0 0 10px}
+footer ul{margin:.4em 0;padding-left:1.2em}
+pre.cmd{font-family:var(--mono);font-size:11.5px;background:#f2f1ec;border:1px solid var(--rule2);
+  padding:10px 12px;overflow-x:auto;color:var(--ink);line-height:1.6}
+
+@media (max-width:620px){
+  .wrap{padding:0 16px 60px}
+  .specbar .inner{padding:0 16px}
+}
+@media print{
+  :root{--paper:#fff;--panel:#fff}
+  body{font-size:11px}
+  .specbar{position:static}
+  .legend .grp{box-shadow:none}
+  .panels{grid-template-columns:repeat(3,1fr);gap:10px}
+  figure,.panel,.claim,tr{break-inside:avoid;page-break-inside:avoid}
+  .sec-head{break-after:avoid;page-break-after:avoid}
+  details{border:0} details>summary{display:none} details[open] .tablewrap{border:1px solid #999}
+  /* 打印时表格不裁切：取消横向滚动，缩排并允许换行 */
+  .tablewrap{overflow:visible}
+  table{font-size:8.2px;table-layout:auto}
+  th,td{padding:2.5px 4px;white-space:normal;word-break:break-word}
+  #raw-table{font-size:6.6px} #raw-table th,#raw-table td{padding:2px 2.5px}
+  thead th{position:static}
+  a[href^="http"]::after{content:" (" attr(href) ")";font-size:9px;color:#666}
+  #tip{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap top">
+<header class="masthead">
+  <div class="kicker">APIGO · LYRA-EVALS · 主测试报告 2026-09</div>
+  <h1>Fusion 路演评测：成本、效率、正确率</h1>
+  <p class="dek">三条赛道、八个变体、一次跑批的完整结果。本页把优势与劣势放在同一屏：Fusion 的可辩护结论只有一条，
+  就是<strong>每答对一题的成本最低</strong>；准确率没有统计意义上的优势，延迟是明确劣势。</p>
+</header>
+</div>
+
+<div class="specbar"><div class="inner">
+  <span><b>数据窗口</b> 2026-09-12 → 09-14 (UTC)，单次运行、无重复采样</span>
+  <span><b>样本量</b> IFEval n=120 · GPQA Diamond n=60 · LCB v6 n=120</span>
+  <span><b>计分</b> accuracy = n_correct / n_scored，失败题不计入分子分母</span>
+  <span><b>成本</b> 实际结算金额 cost_usd_settled（Fusion 无公开报价对照）</span>
+  <span><b>max_tokens</b> GPQA/LCB：Fusion 32768 / 固定模型 16384；IFEval 双方 8192</span>
+</div></div>
+
+<div class="wrap">
+
+<!-- ============ 结论 ============ -->
+<section id="claims">
+  <div class="sec-head"><h2>三句话结论</h2><span class="sec-no">01 / CLAIMS</span></div>
+  <div class="claims">
+    <div class="claim">
+      <div class="t">LiveCodeBench v6 · n=120</div>
+      <p>Fusion auto 每题成本是最强单模型 claude-opus-5 的 <span class="hl">6.9%</span>，
+      名义准确率 0.972（opus-5 为 0.949）。</p>
+      <p class="caveat">但这一档损耗 11.7%（120 题只评上 106 题）。共同子集（八变体均评分的 100 题）上 auto 0.990、opus-5 0.970；
+      把掉的 14 题一律按答错计则降到 0.858，低于 opus-5 的 0.925。三个口径必须一起念，0.972 不能单独拿出来当卖点。</p>
+    </div>
+    <div class="claim">
+      <div class="t">GPQA Diamond · n=60</div>
+      <p>Fusion quality 准确率 0.915，与最强单模型 gpt-6-astra 的 0.917 的差距落在 n=60 的统计噪声内；
+      但每题成本是其 <span class="hl">2.46 倍</span>，延迟 p50 是其 9.9 倍（185.6s vs 18.7s）。</p>
+      <p class="caveat">该赛道全部八个变体的 Wilson 95% 区间彼此重叠，任何准确率排名都不具统计意义。
+      Fusion auto 每题成本 $0.002926，比最便宜的固定模型 gpt-5.6-luna（$0.002416）还贵 21%。</p>
+    </div>
+    <div class="claim">
+      <div class="t">IFEval · n=120</div>
+      <p>Fusion auto 每题成本是最强单模型 gpt-6-astra 的 <span class="hl">1.4%</span>，
+      准确率低 10.1 个百分点（0.874 vs 0.975）。</p>
+      <p class="caveat">这两组区间不重叠，差距是真实的。另外该档 119 题全部路由到 deepseek-v4-flash，
+      在这条赛道上 auto 退化成了常量选择器，没有做逐题选模型的决策。</p>
+    </div>
+  </div>
+  <p class="note" style="margin-top:14px">
+  口径提醒：本页所有「便宜多少倍」都以<strong>最强单模型（BestSingle）</strong>为基准并显式写出。
+  相对<strong>最便宜的固定模型</strong> gpt-5.6-luna 没有量级优势——IFEval 便宜 47%、LCB 便宜 28%、GPQA 反而贵 21%。
+  两组基准在下面每张图里并列呈现。</p>
+</section>
+
+<!-- ============ 图 1 ============ -->
+<section id="fig1">
+  <div class="sec-head"><h2>图 1 · 成本与准确率的帕累托前沿</h2>
+    <span class="sec-no">02 / COST × ACCURACY</span></div>
+  <p class="note tight">x 轴每题成本（对数），y 轴准确率（<strong>轴起点 0.75，非零</strong>，已在轴底画断裂标记）。
+  越靠左上越好。细灰阶梯线是五个固定模型的帕累托前沿，只连非支配点，它是路由地图不是排行榜。
+  竖直细线为 Wilson 95% 区间。<strong>虚线描边</strong>的点表示该组损耗率 &gt; 5%。</p>
+  <div class="charts" id="charts1">
+    <div class="panels" id="fig1-panels"></div>
+  </div>
+  <div class="legend" id="legend1"></div>
+  <p class="note tight">GPQA 面板上的横向灰带是八个变体 Wilson 区间的公共重叠段（0.817–0.931）——带内的差异不可区分。
+  GPQA/LCB 上 Fusion 的 max_tokens 是固定模型的两倍，这两条赛道上的准确率不是同条件比较（见披露表
+  <a href="#D5">D5</a>）。</p>
+</section>
+
+<!-- ============ 图 2 ============ -->
+<section id="fig2">
+  <div class="sec-head"><h2>图 2 · 每答对一题的成本（cost per correct answer）</h2>
+    <span class="sec-no">03 / COST PER CORRECT</span></div>
+  <p class="note tight">把准确率和成本压成一个可比标量：该组结算总额 ÷ 答对题数。对数轴，点位置编码数值（不用条长，避免对数轴上的零基线问题）。
+  这是 Fusion 唯一全场领先的指标，三条赛道都是 auto 档最低。</p>
+  <div class="charts" id="charts2">
+    <div class="panels" id="fig2-panels"></div>
+  </div>
+  <div class="legend" id="legend2"></div>
+  <p class="note tight">分母是 n_correct，损耗样本既不进分子也不进分母，等于<strong>假设损耗样本的成本与正确率和成功样本同分布</strong>。
+  LCB auto 损耗 11.7%，该点对这条假设最敏感。指标出处：SWE-Bench+ 的 effectiveness-aware cost per instance。</p>
+</section>
+
+<!-- ============ 图 3 ============ -->
+<section id="fig3">
+  <div class="sec-head"><h2>图 3 · 路由基线阶梯：Random / BestSingle / Oracle</h2>
+    <span class="sec-no">04 / ROUTING BASELINES</span></div>
+  <p class="note tight">RouterBench 的标准论证结构：Random（均匀随机取一个固定模型）是下界，Oracle（全知、每题挑答对里最便宜的那次）是上界且<strong>不可达</strong>。
+  横轴按每题成本升序排列，柱下标成本。y 轴 0.75 起，用点阵而非条形。</p>
+  <div class="charts" id="charts3">
+    <div class="panels" id="fig3-panels"></div>
+  </div>
+  <div class="legend" id="legend3"></div>
+  <p class="note tight">九个「赛道 × 路由档」组合里有八个 <code>headroom_captured</code> 为负，即落在固定模型帕累托前沿之下；
+  唯一的正值（LCB auto +0.45）受 11.7% 损耗污染。但要注意基线只对齐了准确率、没对齐成本：IFEval auto 准确率低于 Random，
+  成本却只有 Random 的 2.7%，单看 headroom 会得出错误结论。Oracle 的可路由题占比只有 4.2% / 5.0% / 9.2%，见
+  <a href="#D10">D10</a>。</p>
+</section>
+
+<!-- ============ 图 4 ============ -->
+<section id="fig4">
+  <div class="sec-head"><h2>图 4 · 延迟 p50 → p95（哑铃图）</h2>
+    <span class="sec-no">05 / LATENCY</span></div>
+  <p class="note tight">每题端到端耗时，对数轴，左端 p50、右端 p95，按 p50 升序。这是 Fusion 最明确的劣势：三档路由的 p50 和 p95 在所有赛道都高于同赛道固定模型的中位数。</p>
+  <div class="charts" id="charts4">
+    <div class="panels" id="fig4-panels"></div>
+  </div>
+  <div class="legend" id="legend4"></div>
+  <p class="note tight"><strong>为什么慢</strong>：直接原因是输出 token 数。GPQA 上 Fusion quality 每题输出 19991 token，
+  gpt-6-astra 是 664 token，差 30 倍。下表为每题平均输出 token（含推理 token）。
+  固定模型的长尾也不干净——LCB 上 claude-sonnet-5 的 p95/p50 达 32.6 倍、gpt-6-astra 19.1 倍——但绝对量级仍低于 Fusion。</p>
+  <div class="tablewrap" style="margin-top:12px"><table id="tok-table"></table></div>
+</section>
+
+<!-- ============ 共同子集 ============ -->
+<section id="common">
+  <div class="sec-head"><h2>表 1 · 共同子集准确率（损耗偏差复核）</h2>
+    <span class="sec-no">06 / COMMON SUBSET</span></div>
+  <p class="note tight">从 <code>samples.csv</code> 按 <code>sample_id</code> 取每赛道<strong>八个变体全部成功评分</strong>的题，
+  在这个共同子集上重算各变体准确率，与全量并列。目的是检验 Fusion 的损耗是不是「把难题丢掉换高分」。</p>
+  <div class="tablewrap"><table id="common-table"></table></div>
+  <p class="note tight">复核结论：IFEval 与 GPQA 上全量与共同子集几乎不变，损耗没有系统性抬高 Fusion 的分数；
+  LCB 上限定共同子集后 auto 仍领先（0.990 vs opus-5 0.970），说明那 14 题不是被挑掉的难题。
+  但共同子集本身也不是无偏的——它同时剔除了固定模型失败的题，GPQA 只剩 54 题、CI 更宽，
+  结论强度不应超过「损耗看不出明显选择性偏差」。<a href="#claims">悲观口径</a>（掉的题按答错计）仍是必须并列的第三个数字。</p>
+</section>
+
+<!-- ============ 披露表 ============ -->
+<section id="disclosure">
+  <div class="sec-head"><h2>表 2 · 口径披露（D1–D12）</h2><span class="sec-no">07 / DISCLOSURE</span></div>
+  <div class="tablewrap"><table class="disc" id="disc-table"></table></div>
+</section>
+
+<!-- ============ 全量数据 ============ -->
+<section id="raw">
+  <div class="sec-head"><h2>表 3 · 全量数据</h2><span class="sec-no">08 / RAW</span></div>
+  <details>
+    <summary>展开 24 组（3 赛道 × 8 变体）全部字段</summary>
+    <div class="tablewrap"><table id="raw-table"></table></div>
+  </details>
+</section>
+
+<!-- ============ 页脚 ============ -->
+<footer id="method">
+  <h2>数据与方法</h2>
+  <p>本页所有数字均从同目录下的原始产物直接计算，未做二次加工。共同子集一列由 <code>data/samples.csv</code>
+  在页面加载时按 <code>sample_id</code> 求交集后现算，与 <code>RESULTS.md</code>「共同子集准确率」一节同源。</p>
+  <ul>
+    <li>结论与数据表：<a href="RESULTS.md">RESULTS.md</a></li>
+    <li>字段与生成说明：<a href="data/README.md">data/README.md</a></li>
+    <li>展示页设计依据：<a href="DESIGN-NOTES.md">DESIGN-NOTES.md</a></li>
+    <li>原始产物：<a href="data/report.csv">data/report.csv</a> ·
+        <a href="data/report.json">data/report.json</a> ·
+        <a href="data/samples.csv">data/samples.csv</a></li>
+  </ul>
+  <p>生成命令（在仓库根目录执行）：</p>
+  <pre class="cmd">make inspect-report \
+  LOGS=.local/inspect-logs/main \
+  PLATFORM=.local/platform-logs-main.json \
+  OUT=.local/inspect-report-main</pre>
+  <p>跑批时间 2026-09-12T16:06 至 2026-09-14T22:41 (UTC)，报告生成于 2026-09-15。价格与模型版本均为该时点快照，会过期。
+  本页为单文件静态页，数据内嵌，不发任何网络请求。</p>
+</footer>
+
+</div>
+<div id="tip" role="status" aria-live="polite"></div>
+
+<script id="report-data" type="application/json">{"rows":[{"bench":"ifeval","label":"gpt-5.6-luna","fusion":false,"max_tokens":8192,"effort":"high","n_planned":120,"n_scored":120,"n_correct":113,"n_error":0,"err":0.0,"err_kinds":"","acc":0.9417,"wlo":0.8845,"whi":0.9715,"cps":0.000914,"cpps":0.000914,"cpc":0.000971,"settled":0.109734,"p50":4.34,"p95":17.2,"otok":753.6,"itok":50.8,"routing":""},{"bench":"ifeval","label":"gpt-5.6-sol","fusion":false,"max_tokens":8192,"effort":"high","n_planned":120,"n_scored":120,"n_correct":114,"n_error":0,"err":0.0,"err_kinds":"","acc":0.95,"wlo":0.8952,"whi":0.9769,"cps":0.012371,"cpps":0.012371,"cpc":0.013022,"settled":1.484464,"p50":5.7,"p95":27.56,"otok":608.4,"itok":50.8,"routing":""},{"bench":"ifeval","label":"gpt-6-astra","fusion":false,"max_tokens":8192,"effort":"high","n_planned":120,"n_scored":119,"n_correct":116,"n_error":1,"err":0.0083,"err_kinds":"{\"connection\": 1}","acc":0.9748,"wlo":0.9285,"whi":0.9914,"cps":0.036188,"cpps":0.035887,"cpc":0.037124,"settled":4.30639,"p50":32.75,"p95":93.71,"otok":675.8,"itok":51.2,"routing":""},{"bench":"ifeval","label":"claude-sonnet-5","fusion":false,"max_tokens":8192,"effort":"high","n_planned":120,"n_scored":120,"n_correct":104,"n_error":0,"err":0.0,"err_kinds":"","acc":0.8667,"wlo":0.7944,"whi":0.9162,"cps":0.007631,"cpps":0.007631,"cpc":0.008805,"settled":0.91577,"p50":9.09,"p95":24.52,"otok":748.9,"itok":71.0,"routing":""},{"bench":"ifeval","label":"claude-opus-5","fusion":false,"max_tokens":8192,"effort":"high","n_planned":120,"n_scored":120,"n_correct":104,"n_error":0,"err":0.0,"err_kinds":"","acc":0.8667,"wlo":0.7944,"whi":0.9162,"cps":0.037115,"cpps":0.037115,"cpc":0.042825,"settled":4.453775,"p50":16.02,"p95":69.47,"otok":1413.9,"itok":71.2,"routing":""},{"bench":"ifeval","label":"Fusion auto","fusion":true,"max_tokens":8192,"effort":"","n_planned":120,"n_scored":119,"n_correct":104,"n_error":1,"err":0.0083,"err_kinds":"{\"upstream\": 1}","acc":0.8739,"wlo":0.8024,"whi":0.9221,"cps":0.000488,"cpps":0.000484,"cpc":0.000558,"settled":0.058038,"p50":9.2,"p95":40.3,"otok":1016.2,"itok":301.2,"routing":"{\"deepseek-v4-flash\": 119}"},{"bench":"ifeval","label":"Fusion budget","fusion":true,"max_tokens":8192,"effort":"","n_planned":120,"n_scored":120,"n_correct":111,"n_error":0,"err":0.0,"err_kinds":"","acc":0.925,"wlo":0.8636,"whi":0.96,"cps":0.003474,"cpps":0.003474,"cpc":0.003755,"settled":0.416848,"p50":16.35,"p95":54.25,"otok":1578.1,"itok":568.0,"routing":""},{"bench":"ifeval","label":"Fusion quality","fusion":true,"max_tokens":8192,"effort":"","n_planned":120,"n_scored":120,"n_correct":112,"n_error":0,"err":0.0,"err_kinds":"","acc":0.9333,"wlo":0.8739,"whi":0.9658,"cps":0.023564,"cpps":0.023564,"cpc":0.025247,"settled":2.827683,"p50":36.91,"p95":209.02,"otok":5825.6,"itok":1245.7,"routing":""},{"bench":"gpqa_diamond","label":"gpt-5.6-luna","fusion":false,"max_tokens":16384,"effort":"high","n_planned":60,"n_scored":60,"n_correct":54,"n_error":0,"err":0.0,"err_kinds":"","acc":0.9,"wlo":0.7985,"whi":0.9534,"cps":0.002416,"cpps":0.002416,"cpc":0.002685,"settled":0.144975,"p50":8.36,"p95":67.2,"otok":1812.7,"itok":240.3,"routing":""},{"bench":"gpqa_diamond","label":"gpt-5.6-sol","fusion":false,"max_tokens":16384,"effort":"high","n_planned":60,"n_scored":60,"n_correct":52,"n_error":0,"err":0.0,"err_kinds":"","acc":0.8667,"wlo":0.7583,"whi":0.9309,"cps":0.01946,"cpps":0.01946,"cpc":0.022454,"settled":1.16762,"p50":7.22,"p95":40.85,"otok":925.1,"itok":239.8,"routing":""},{"bench":"gpqa_diamond","label":"gpt-6-astra","fusion":false,"max_tokens":16384,"effort":"high","n_planned":60,"n_scored":60,"n_correct":55,"n_error":0,"err":0.0,"err_kinds":"","acc":0.9167,"wlo":0.8193,"whi":0.9639,"cps":0.035579,"cpps":0.035579,"cpc":0.038814,"settled":2.13475,"p50":18.74,"p95":61.04,"otok":663.6,"itok":239.8,"routing":""},{"bench":"gpqa_diamond","label":"claude-sonnet-5","fusion":false,"max_tokens":16384,"effort":"high","n_planned":60,"n_scored":58,"n_correct":52,"n_error":2,"err":0.0333,"err_kinds":"{\"connection\": 2}","acc":0.8966,"wlo":0.7921,"whi":0.9517,"cps":0.023889,"cpps":0.023093,"cpc":0.026646,"settled":1.385582,"p50":13.39,"p95":71.23,"otok":2159.5,"itok":345.7,"routing":""},{"bench":"gpqa_diamond","label":"claude-opus-5","fusion":false,"max_tokens":16384,"effort":"high","n_planned":60,"n_scored":60,"n_correct":52,"n_error":0,"err":0.0,"err_kinds":"","acc":0.8667,"wlo":0.7583,"whi":0.9309,"cps":0.023022,"cpps":0.023022,"cpc":0.026564,"settled":1.381345,"p50":8.29,"p95":23.86,"otok":851.1,"itok":349.1,"routing":""},{"bench":"gpqa_diamond","label":"Fusion auto","fusion":true,"max_tokens":32768,"effort":"","n_planned":60,"n_scored":55,"n_correct":49,"n_error":5,"err":0.0833,"err_kinds":"{\"upstream\": 5}","acc":0.8909,"wlo":0.7817,"whi":0.949,"cps":0.002926,"cpps":0.002682,"cpc":0.003285,"settled":0.160949,"p50":34.44,"p95":224.36,"otok":6896.2,"itok":669.5,"routing":""},{"bench":"gpqa_diamond","label":"Fusion budget","fusion":true,"max_tokens":32768,"effort":"","n_planned":60,"n_scored":56,"n_correct":50,"n_error":4,"err":0.0667,"err_kinds":"{\"upstream\": 4}","acc":0.8929,"wlo":0.7853,"whi":0.95,"cps":0.016621,"cpps":0.015513,"cpc":0.018616,"settled":0.930803,"p50":57.12,"p95":342.71,"otok":9077.3,"itok":829.9,"routing":""},{"bench":"gpqa_diamond","label":"Fusion quality","fusion":true,"max_tokens":32768,"effort":"","n_planned":60,"n_scored":59,"n_correct":54,"n_error":1,"err":0.0167,"err_kinds":"{\"upstream\": 1}","acc":0.9153,"wlo":0.8165,"whi":0.9633,"cps":0.087581,"cpps":0.086121,"cpc":0.09569,"settled":5.167271,"p50":185.63,"p95":832.97,"otok":19991.2,"itok":1437.7,"routing":""},{"bench":"livecodebench_v6","label":"gpt-5.6-luna","fusion":false,"max_tokens":16384,"effort":"high","n_planned":120,"n_scored":118,"n_correct":108,"n_error":2,"err":0.0167,"err_kinds":"{\"connection\": 1, \"scorer\": 1}","acc":0.9153,"wlo":0.851,"whi":0.9533,"cps":0.00269,"cpps":0.002645,"cpc":0.002939,"settled":0.317421,"p50":6.13,"p95":109.38,"otok":2046.6,"itok":530.3,"routing":""},{"bench":"livecodebench_v6","label":"gpt-5.6-sol","fusion":false,"max_tokens":16384,"effort":"high","n_planned":120,"n_scored":118,"n_correct":106,"n_error":2,"err":0.0167,"err_kinds":"{\"connection\": 2}","acc":0.8983,"wlo":0.8306,"whi":0.9409,"cps":0.018829,"cpps":0.018516,"cpc":0.020961,"settled":2.22188,"p50":5.19,"p95":83.19,"otok":820.8,"itok":523.9,"routing":""},{"bench":"livecodebench_v6","label":"gpt-6-astra","fusion":false,"max_tokens":16384,"effort":"high","n_planned":120,"n_scored":115,"n_correct":106,"n_error":5,"err":0.0417,"err_kinds":"{\"connection\": 5}","acc":0.9217,"wlo":0.8579,"whi":0.9583,"cps":0.027136,"cpps":0.026006,"cpc":0.02944,"settled":3.12068,"p50":15.84,"p95":301.98,"otok":409.3,"itok":532.7,"routing":""},{"bench":"livecodebench_v6","label":"claude-sonnet-5","fusion":false,"max_tokens":16384,"effort":"high","n_planned":120,"n_scored":110,"n_correct":89,"n_error":10,"err":0.0833,"err_kinds":"{\"connection\": 10}","acc":0.8091,"wlo":0.7257,"whi":0.8716,"cps":0.021928,"cpps":0.020101,"cpc":0.027103,"settled":2.41213,"p50":6.45,"p95":210.59,"otok":1782.4,"itok":793.3,"routing":""},{"bench":"livecodebench_v6","label":"claude-opus-5","fusion":false,"max_tokens":16384,"effort":"high","n_planned":120,"n_scored":117,"n_correct":111,"n_error":3,"err":0.025,"err_kinds":"{\"connection\": 3}","acc":0.9487,"wlo":0.8926,"whi":0.9763,"cps":0.030519,"cpps":0.029756,"cpc":0.032168,"settled":3.570685,"p50":5.46,"p95":91.8,"otok":1006.4,"itok":801.9,"routing":""},{"bench":"livecodebench_v6","label":"Fusion auto","fusion":true,"max_tokens":32768,"effort":"","n_planned":120,"n_scored":106,"n_correct":103,"n_error":14,"err":0.1167,"err_kinds":"{\"scorer\": 1, \"upstream\": 13}","acc":0.9717,"wlo":0.9201,"whi":0.9903,"cps":0.001939,"cpps":0.001712,"cpc":0.001995,"settled":0.205487,"p50":22.16,"p95":158.84,"otok":3924.5,"itok":1437.9,"routing":""},{"bench":"livecodebench_v6","label":"Fusion budget","fusion":true,"max_tokens":32768,"effort":"","n_planned":120,"n_scored":105,"n_correct":96,"n_error":15,"err":0.125,"err_kinds":"{\"other\": 5, \"scorer\": 1, \"upstream\": 9}","acc":0.9143,"wlo":0.8451,"whi":0.9543,"cps":0.019858,"cpps":0.017376,"cpc":0.02172,"settled":2.085129,"p50":38.52,"p95":482.7,"otok":7055.5,"itok":1740.7,"routing":""},{"bench":"livecodebench_v6","label":"Fusion quality","fusion":true,"max_tokens":32768,"effort":"","n_planned":120,"n_scored":111,"n_correct":103,"n_error":9,"err":0.075,"err_kinds":"{\"upstream\": 9}","acc":0.9279,"wlo":0.8642,"whi":0.963,"cps":0.074747,"cpps":0.069141,"cpc":0.080552,"settled":8.296876,"p50":100.9,"p95":804.37,"otok":14260.2,"itok":2519.1,"routing":""}],"baselines":{"ifeval":{"benchmark_label":"IFEval（指令遵循）","pool":["gpt-5.6-luna","gpt-5.6-sol","gpt-6-astra","claude-sonnet-5","claude-opus-5"],"n_planned":120,"n_evaluable":120,"best_single":{"model":"gpt-6-astra","label":"gpt-6-astra","accuracy":0.9748,"cost_usd_per_sample":0.034335},"oracle":{"label":"Oracle（理论上界）","accuracy":0.9833,"cost_usd_per_sample":0.001842,"routable_share":0.0417,"unsolved_share":0.0167},"random_uniform":{"label":"Random（均匀随机）","accuracy":0.92,"cost_usd_per_sample":0.018132},"pareto_front":[{"model":"gpt-5.6-luna","cost_usd_per_sample":0.000933,"accuracy":0.9417},{"model":"gpt-5.6-sol","cost_usd_per_sample":0.012564,"accuracy":0.95},{"model":"gpt-6-astra","cost_usd_per_sample":0.034335,"accuracy":0.9748}],"variants":[{"model":"apigo/lyra-auto","label":"Fusion auto","accuracy":0.8739,"cost_usd_per_sample":0.000488,"cost_vs_best_single":0.0142,"headroom_captured":-11.8242,"headroom_is_empty":false,"gap_to_oracle_pp":10.94,"above_random_mix":"是"},{"model":"apigo/lyra-budget","label":"Fusion budget","accuracy":0.925,"cost_usd_per_sample":0.003474,"cost_vs_best_single":0.1012,"headroom_captured":-5.8359,"headroom_is_empty":false,"gap_to_oracle_pp":5.83,"above_random_mix":"否"},{"model":"apigo/lyra-quality","label":"Fusion quality","accuracy":0.9333,"cost_usd_per_sample":0.023564,"cost_vs_best_single":0.6863,"headroom_captured":-4.8633,"headroom_is_empty":false,"gap_to_oracle_pp":5.0,"above_random_mix":"否"}],"cost_fallback_samples":{"total":11,"by_model":{"gpt-5.6-luna":3,"gpt-5.6-sol":2,"gpt-6-astra":2,"claude-sonnet-5":1,"claude-opus-5":3}},"cost_fallback_note":"逐题成本优先用按请求时长匹配到的账单金额；匹配不上的题回退到该模型在本赛道的运行平均每题成本（总结算成本 ÷ 成功评分题数）。"},"gpqa_diamond":{"benchmark_label":"GPQA Diamond（研究生科学题）","pool":["gpt-5.6-luna","gpt-5.6-sol","gpt-6-astra","claude-sonnet-5","claude-opus-5"],"n_planned":60,"n_evaluable":60,"best_single":{"model":"gpt-6-astra","label":"gpt-6-astra","accuracy":0.9167,"cost_usd_per_sample":0.035579},"oracle":{"label":"Oracle（理论上界）","accuracy":0.9333,"cost_usd_per_sample":0.003948,"routable_share":0.05,"unsolved_share":0.0667},"random_uniform":{"label":"Random（均匀随机）","accuracy":0.8893,"cost_usd_per_sample":0.020484},"pareto_front":[{"model":"gpt-5.6-luna","cost_usd_per_sample":0.002299,"accuracy":0.9},{"model":"gpt-6-astra","cost_usd_per_sample":0.035579,"accuracy":0.9167}],"variants":[{"model":"apigo/lyra-auto","label":"Fusion auto","accuracy":0.8909,"cost_usd_per_sample":0.002926,"cost_vs_best_single":0.0822,"headroom_captured":-1.5511,"headroom_is_empty":false,"gap_to_oracle_pp":4.24,"above_random_mix":"否"},{"model":"apigo/lyra-budget","label":"Fusion budget","accuracy":0.8929,"cost_usd_per_sample":0.016621,"cost_vs_best_single":0.4672,"headroom_captured":-1.4309,"headroom_is_empty":false,"gap_to_oracle_pp":4.04,"above_random_mix":"否"},{"model":"apigo/lyra-quality","label":"Fusion quality","accuracy":0.9153,"cost_usd_per_sample":0.087581,"cost_vs_best_single":2.4616,"headroom_captured":-0.0842,"headroom_is_empty":false,"gap_to_oracle_pp":1.8,"above_random_mix":"否"}],"cost_fallback_samples":{"total":6,"by_model":{"gpt-5.6-luna":3,"gpt-5.6-sol":1,"gpt-6-astra":0,"claude-sonnet-5":1,"claude-opus-5":1}},"cost_fallback_note":"逐题成本优先用按请求时长匹配到的账单金额；匹配不上的题回退到该模型在本赛道的运行平均每题成本（总结算成本 ÷ 成功评分题数）。"},"livecodebench_v6":{"benchmark_label":"LiveCodeBench v6（编程题）","pool":["gpt-5.6-luna","gpt-5.6-sol","gpt-6-astra","claude-sonnet-5","claude-opus-5"],"n_planned":120,"n_evaluable":119,"best_single":{"model":"claude-opus-5","label":"claude-opus-5","accuracy":0.9487,"cost_usd_per_sample":0.027945},"oracle":{"label":"Oracle（理论上界）","accuracy":1.0,"cost_usd_per_sample":0.004753,"routable_share":0.0924,"unsolved_share":0.0},"random_uniform":{"label":"Random（均匀随机）","accuracy":0.8986,"cost_usd_per_sample":0.018946},"pareto_front":[{"model":"gpt-5.6-luna","cost_usd_per_sample":0.00295,"accuracy":0.9153},{"model":"gpt-6-astra","cost_usd_per_sample":0.023882,"accuracy":0.9217},{"model":"claude-opus-5","cost_usd_per_sample":0.027945,"accuracy":0.9487}],"variants":[{"model":"apigo/lyra-auto","label":"Fusion auto","accuracy":0.9717,"cost_usd_per_sample":0.001939,"cost_vs_best_single":0.0694,"headroom_captured":0.4483,"headroom_is_empty":false,"gap_to_oracle_pp":2.83,"above_random_mix":"是"},{"model":"apigo/lyra-budget","label":"Fusion budget","accuracy":0.9143,"cost_usd_per_sample":0.019858,"cost_vs_best_single":0.7106,"headroom_captured":-0.6706,"headroom_is_empty":false,"gap_to_oracle_pp":8.57,"above_random_mix":"否"},{"model":"apigo/lyra-quality","label":"Fusion quality","accuracy":0.9279,"cost_usd_per_sample":0.074747,"cost_vs_best_single":2.6748,"headroom_captured":-0.4055,"headroom_is_empty":false,"gap_to_oracle_pp":7.21,"above_random_mix":"否"}],"cost_fallback_samples":{"total":124,"by_model":{"gpt-5.6-luna":28,"gpt-5.6-sol":23,"gpt-6-astra":14,"claude-sonnet-5":33,"claude-opus-5":26}},"cost_fallback_note":"逐题成本优先用按请求时长匹配到的账单金额；匹配不上的题回退到该模型在本赛道的运行平均每题成本（总结算成本 ÷ 成功评分题数）。"}},"common":{"ifeval":{"n":118,"v":{"Fusion auto":{"c":103,"full_c":104,"full_n":119},"Fusion budget":{"c":109,"full_c":111,"full_n":120},"Fusion quality":{"c":110,"full_c":112,"full_n":120},"claude-opus-5":{"c":102,"full_c":104,"full_n":120},"claude-sonnet-5":{"c":102,"full_c":104,"full_n":120},"gpt-5.6-luna":{"c":111,"full_c":113,"full_n":120},"gpt-5.6-sol":{"c":112,"full_c":114,"full_n":120},"gpt-6-astra":{"c":115,"full_c":116,"full_n":119}}},"gpqa_diamond":{"n":54,"v":{"Fusion auto":{"c":48,"full_c":49,"full_n":55},"Fusion budget":{"c":48,"full_c":50,"full_n":56},"Fusion quality":{"c":50,"full_c":54,"full_n":59},"claude-opus-5":{"c":47,"full_c":52,"full_n":60},"claude-sonnet-5":{"c":48,"full_c":52,"full_n":58},"gpt-5.6-luna":{"c":50,"full_c":54,"full_n":60},"gpt-5.6-sol":{"c":47,"full_c":52,"full_n":60},"gpt-6-astra":{"c":50,"full_c":55,"full_n":60}}},"livecodebench_v6":{"n":100,"v":{"Fusion auto":{"c":99,"full_c":103,"full_n":106},"Fusion budget":{"c":94,"full_c":96,"full_n":105},"Fusion quality":{"c":95,"full_c":103,"full_n":111},"claude-opus-5":{"c":97,"full_c":111,"full_n":117},"claude-sonnet-5":{"c":87,"full_c":89,"full_n":110},"gpt-5.6-luna":{"c":90,"full_c":108,"full_n":118},"gpt-5.6-sol":{"c":92,"full_c":106,"full_n":118},"gpt-6-astra":{"c":92,"full_c":106,"full_n":115}}}}}</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById('report-data').textContent);
+const BENCHES = [
+  {id:'ifeval',        name:'IFEval（指令遵循）',        short:'IFEval'},
+  {id:'gpqa_diamond',  name:'GPQA Diamond（研究生科学）', short:'GPQA'},
+  {id:'livecodebench_v6', name:'LiveCodeBench v6（编程）', short:'LCB v6'}
+];
+const FUSION_COLOR = {'Fusion auto':'var(--f1)','Fusion budget':'var(--f2)','Fusion quality':'var(--f3)'};
+const FUSION_ORDER = ['Fusion auto','Fusion budget','Fusion quality'];
+const SHAPE = {'gpt-5.6-luna':'circle','gpt-5.6-sol':'square','gpt-6-astra':'triangle',
+               'claude-sonnet-5':'diamond','claude-opus-5':'cross'};
+const NS='http://www.w3.org/2000/svg';
+
+const rowsOf = b => D.rows.filter(r => r.bench === b);
+const fmtUSD = v => '$'+(v >= 0.01 ? v.toPrecision(4) : v.toPrecision(3));
+const fmtUSD4 = v => '$'+v.toPrecision(4);
+const fmtAcc = v => v.toFixed(3);
+const pct = v => (v*100).toFixed(1)+'%';
+
+/* ---------- SVG 小工具 ---------- */
+function el(tag, attrs, parent){
+  const n = document.createElementNS(NS, tag);
+  for(const k in attrs) if(attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+  if(parent) parent.appendChild(n);
+  return n;
+}
+function txt(parent, x, y, s, attrs){
+  const n = el('text', Object.assign({x, y, fill:'var(--ink2)', 'font-size':9,
+    'font-family':'var(--mono)'}, attrs||{}), parent);
+  n.textContent = s; return n;
+}
+// 形状标记：固定模型靠形状区分，不靠颜色
+function mark(parent, shape, x, y, r, attrs){
+  const a = Object.assign({}, attrs||{});
+  let n;
+  if(shape==='circle')      n = el('circle', Object.assign({cx:x, cy:y, r:r}, a), parent);
+  else if(shape==='square') n = el('rect', Object.assign({x:x-r, y:y-r, width:2*r, height:2*r}, a), parent);
+  else if(shape==='triangle') n = el('path', Object.assign({d:`M${x} ${y-r*1.18}L${x+r*1.1} ${y+r*.82}L${x-r*1.1} ${y+r*.82}Z`}, a), parent);
+  else if(shape==='diamond') n = el('path', Object.assign({d:`M${x} ${y-r*1.3}L${x+r*1.15} ${y}L${x} ${y+r*1.3}L${x-r*1.15} ${y}Z`}, a), parent);
+  else if(shape==='cross')  n = el('path', Object.assign({d:`M${x-r*1.2} ${y}H${x+r*1.2}M${x} ${y-r*1.2}V${y+r*1.2}`,
+      'stroke-width':2.1, fill:'none'}, a), parent);
+  else n = el('circle', Object.assign({cx:x, cy:y, r:r}, a), parent);
+  return n;
+}
+const log10 = Math.log10;
+function makeLogX(min, max, x0, x1){
+  const a = log10(min), b = log10(max);
+  return v => x0 + (log10(v) - a) / (b - a) * (x1 - x0);
+}
+function logTicks(min, max){
+  const out = [];
+  for(let e = Math.floor(log10(min)); e <= Math.ceil(log10(max)); e++){
+    const v = Math.pow(10, e);
+    if(v >= min*0.999 && v <= max*1.001) out.push(v);
+  }
+  return out;
+}
+
+/* ---------- tooltip ---------- */
+const tip = document.getElementById('tip');
+function tipHTML(r){
+  return `<b>${r.label}</b> · ${BENCHES.find(b=>b.id===r.bench).short}<br>`+
+    `<span class="k">准确率</span> ${fmtAcc(r.acc)}　CI [${r.wlo.toFixed(3)}, ${r.whi.toFixed(3)}]<br>`+
+    `<span class="k">评分</span> ${r.n_scored}/${r.n_planned}　<span class="k">损耗</span> ${pct(r.err)}<br>`+
+    `<span class="k">每题成本</span> ${fmtUSD(r.cps)}　<span class="k">按计划题数</span> ${fmtUSD(r.cpps)}<br>`+
+    `<span class="k">每答对一题</span> ${fmtUSD(r.cpc)}<br>`+
+    `<span class="k">延迟</span> p50 ${r.p50}s / p95 ${r.p95}s<br>`+
+    `<span class="k">输出 token/题</span> ${Math.round(r.otok)}　<span class="k">max_tokens</span> ${r.max_tokens}`;
+}
+function bindTip(node, html){
+  node.style.cursor = 'crosshair';
+  node.addEventListener('mouseenter', e => { tip.innerHTML = html; tip.style.opacity = 1; });
+  node.addEventListener('mousemove', e => {
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    let x = e.clientX + 14, y = e.clientY + 14;
+    if(x + w > innerWidth - 8) x = e.clientX - w - 14;
+    if(y + h > innerHeight - 8) y = e.clientY - h - 14;
+    tip.style.left = x+'px'; tip.style.top = y+'px';
+  });
+  node.addEventListener('mouseleave', () => tip.style.opacity = 0);
+}
+function colorOf(r){ return r.fusion ? FUSION_COLOR[r.label] : 'var(--fixed)'; }
+function groupCls(r){ return r.fusion ? 'g-fusion' : 'g-fixed'; }
+
+/* ---------- 面板骨架 ---------- */
+function panel(container, b, metaText){
+  const d = document.createElement('div'); d.className = 'panel';
+  d.innerHTML = `<h3>${b.name}</h3><div class="meta">${metaText}</div>`;
+  container.appendChild(d);
+  return d;
+}
+function metaFor(bid){
+  const rs = rowsOf(bid);
+  const fu = rs.filter(r=>r.fusion), fx = rs.filter(r=>!r.fusion);
+  const rng = a => { const lo=Math.min(...a.map(r=>r.err)), hi=Math.max(...a.map(r=>r.err));
+    return lo===hi ? pct(lo) : pct(lo)+'–'+pct(hi); };
+  const mt = fu[0].max_tokens === fx[0].max_tokens
+    ? `max_tokens 双方 ${fu[0].max_tokens}`
+    : `max_tokens Fusion ${fu[0].max_tokens} / 固定 ${fx[0].max_tokens}`;
+  return `n=${rs[0].n_planned}（单次运行）　损耗 Fusion ${rng(fu)}・固定 ${rng(fx)}<br>${mt}　固定模型 effort=high，Fusion 无该参数`;
+}
+
+/* ================= 图 1：成本 × 准确率散点 ================= */
+function fig1(){
+  const host = document.getElementById('fig1-panels');
+  const W=360, H=300, ml=40, mr=14, mt=10, mb=46;
+  const X0=ml, X1=W-mr, Y0=mt, Y1=H-mb;
+  const CMIN=0.0003, CMAX=0.12, AMIN=0.75, AMAX=1.0;
+  const sx = makeLogX(CMIN, CMAX, X0, X1);
+  const sy = a => Y1 - (a - AMIN)/(AMAX - AMIN)*(Y1 - Y0);
+
+  BENCHES.forEach(b => {
+    const p = panel(host, b, metaFor(b.id));
+    const svg = el('svg', {viewBox:`0 0 ${W} ${H}`, role:'img',
+      'aria-label':`${b.name} 成本与准确率散点`}, p);
+    // 网格
+    [0.75,0.80,0.85,0.90,0.95,1.00].forEach(a => {
+      el('line',{x1:X0,x2:X1,y1:sy(a),y2:sy(a),stroke:'var(--rule)','stroke-width':1},svg);
+      txt(svg, X0-6, sy(a)+3, a.toFixed(2), {'text-anchor':'end'});
+    });
+    logTicks(CMIN,CMAX).forEach(v => {
+      el('line',{x1:sx(v),x2:sx(v),y1:Y0,y2:Y1,stroke:'var(--rule)','stroke-width':1},svg);
+      txt(svg, sx(v), Y1+14, '$'+(v<0.01? v.toFixed(3) : v.toFixed(2)), {'text-anchor':'middle'});
+    });
+    // GPQA 重叠带
+    if(b.id==='gpqa_diamond'){
+      const rs = rowsOf(b.id);
+      const lo = Math.max(...rs.map(r=>r.wlo)), hi = Math.min(...rs.map(r=>r.whi));
+      el('rect',{x:X0,y:sy(hi),width:X1-X0,height:sy(lo)-sy(hi),fill:'var(--ink)',
+        opacity:.055},svg);
+      el('line',{x1:X0,x2:X1,y1:sy(hi),y2:sy(hi),stroke:'var(--muted)','stroke-width':1,
+        'stroke-dasharray':'2 3'},svg);
+      el('line',{x1:X0,x2:X1,y1:sy(lo),y2:sy(lo),stroke:'var(--muted)','stroke-width':1,
+        'stroke-dasharray':'2 3'},svg);
+      txt(svg, X0+3, sy(lo)-4, `CI 公共重叠段 ${lo.toFixed(3)}–${hi.toFixed(3)}：带内差异不可区分`,
+        {'text-anchor':'start','font-size':8.2,fill:'var(--ink2)'});
+    }
+    // 帕累托前沿（只连非支配的固定模型，成本取 rows 口径）
+    const rs = rowsOf(b.id);
+    const frontNames = D.baselines[b.id].pareto_front.map(f=>f.model);
+    const fp = frontNames.map(n=>rs.find(r=>r.label===n)).filter(Boolean)
+                 .sort((a,b2)=>a.cps-b2.cps);
+    let d = '';
+    fp.forEach((r,i)=>{ d += i===0 ? `M${sx(r.cps)} ${sy(r.acc)}`
+      : `L${sx(r.cps)} ${sy(fp[i-1].acc)}L${sx(r.cps)} ${sy(r.acc)}`; });
+    el('path',{d, fill:'none', stroke:'var(--best)','stroke-width':1.2,
+      'stroke-dasharray':'5 3', opacity:.85, class:'g-fixed'},svg);
+    txt(svg, sx(fp[fp.length-1].cps), sy(fp[fp.length-1].acc)-9, '固定模型帕累托前沿',
+      {'text-anchor':'end','font-size':8.2,fill:'var(--best)'});
+
+    // 点
+    rs.slice().sort((a,b2)=> (a.fusion?1:0)-(b2.fusion?1:0)).forEach(r => {
+      const g = el('g',{class:groupCls(r)},svg);
+      const c = colorOf(r), x = sx(r.cps);
+      // 误差线
+      el('line',{x1:x,x2:x,y1:sy(r.whi),y2:sy(r.wlo),stroke:c,'stroke-width':1,opacity:.4},g);
+      el('line',{x1:x-3,x2:x+3,y1:sy(r.whi),y2:sy(r.whi),stroke:c,'stroke-width':1,opacity:.4},g);
+      el('line',{x1:x-3,x2:x+3,y1:sy(r.wlo),y2:sy(r.wlo),stroke:c,'stroke-width':1,opacity:.4},g);
+      const hi = r.err > 0.05;
+      const n = mark(g, r.fusion?'circle':SHAPE[r.label], x, sy(r.acc), r.fusion?5.2:4.4,
+        {fill: r.label==='claude-opus-5' ? 'none' : c,
+         stroke: hi ? 'var(--flag)' : (r.fusion ? 'var(--ink)' : 'var(--panel)'),
+         'stroke-width': hi ? 1.6 : 1.2,
+         'stroke-dasharray': hi ? '2.2 1.6' : null});
+      if(r.label==='claude-opus-5') n.setAttribute('stroke', hi?'var(--flag)':c);
+      bindTip(n, tipHTML(r));
+      if(r.fusion){
+        txt(g, x, sy(r.acc)-8.5, r.label.replace('Fusion ',''),
+          {'text-anchor':'middle','font-size':8.4,fill:c,'font-weight':600});
+      }
+    });
+    // 轴断裂标记
+    el('line',{x1:X0,x2:X1,y1:Y1,y2:Y1,stroke:'var(--rule2)','stroke-width':1},svg);
+    el('path',{d:`M${X0-4} ${Y1+4}l4 -4l-4 -4`, fill:'none', stroke:'var(--ink2)','stroke-width':1.3},svg);
+    el('path',{d:`M${X0-4} ${Y1+8}l4 -4l-4 -4`, fill:'none', stroke:'var(--ink2)','stroke-width':1.3},svg);
+    txt(svg, X0-30, mt+2, '准确率', {'font-size':8.6, 'text-anchor':'start'});
+    txt(svg, (X0+X1)/2, H-6, '每题成本 USD（对数轴）　／　y 轴起点 0.75，非零',
+      {'text-anchor':'middle','font-size':8.6});
+  });
+}
+
+/* ================= 图 2：每答对一题成本 ================= */
+function fig2(){
+  const host = document.getElementById('fig2-panels');
+  const W=360, ml=104, mr=64, mt=16, mb=34;
+  BENCHES.forEach(b => {
+    const rs = rowsOf(b.id).slice().sort((a,b2)=>a.cpc-b2.cpc);
+    const H = mt + rs.length*24 + mb;
+    const p = panel(host, b, metaFor(b.id));
+    const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, role:'img',
+      'aria-label':`${b.name} 每答对一题的成本`}, p);
+    const X0=ml, X1=W-mr, Y1=H-mb;
+    const CMIN=0.0004, CMAX=0.12;
+    const sx = makeLogX(CMIN, CMAX, X0, X1);
+    logTicks(CMIN,CMAX).forEach(v => {
+      el('line',{x1:sx(v),x2:sx(v),y1:mt-8,y2:Y1,stroke:'var(--rule)','stroke-width':1},svg);
+      txt(svg, sx(v), Y1+13, '$'+(v<0.01? v.toFixed(3) : v.toFixed(2)), {'text-anchor':'middle'});
+    });
+    const best = D.baselines[b.id].best_single.label;
+    rs.forEach((r,i) => {
+      const y = mt + i*24 + 10, c = colorOf(r);
+      const g = el('g',{class:groupCls(r)},svg);
+      el('line',{x1:X0,x2:sx(r.cpc),y1:y,y2:y,stroke:c,'stroke-width':1.4,opacity:.45},g);
+      const hi = r.err > 0.05;
+      const n = mark(g, r.fusion?'circle':SHAPE[r.label], sx(r.cpc), y, r.fusion?5.4:4.6,
+        {fill: r.label==='claude-opus-5' ? 'none' : c,
+         stroke: hi?'var(--flag)':(r.label==='claude-opus-5'?c:(r.fusion?'var(--ink)':'var(--panel)')),
+         'stroke-width': hi?1.6:1.2, 'stroke-dasharray': hi?'2.2 1.6':null});
+      bindTip(n, tipHTML(r));
+      const lab = txt(svg, X0-9, y+3.4, r.label + (r.label===best?' ★':''),
+        {'text-anchor':'end','font-size':9.4, fill: r.fusion?c:'var(--ink)',
+         'font-weight': r.fusion?600:400});
+      lab.setAttribute('class', groupCls(r));
+      txt(g, sx(r.cpc)+9, y+3.4, fmtUSD(r.cpc), {'font-size':9.2, fill:'var(--ink)'});
+    });
+    el('line',{x1:X0,x2:X0,y1:mt-8,y2:Y1,stroke:'var(--rule2)','stroke-width':1},svg);
+    txt(svg, (X0+X1)/2, H-4, '每答对一题成本 USD（对数轴）　★=最强单模型',
+      {'text-anchor':'middle','font-size':8.6});
+  });
+}
+
+/* ================= 图 3：路由基线阶梯 ================= */
+function fig3(){
+  const host = document.getElementById('fig3-panels');
+  const W=360, H=348, ml=40, mr=12, mt=16, mb=96;
+  const X0=ml, X1=W-mr, Y0=mt, Y1=H-mb, AMIN=0.75, AMAX=1.0;
+  const sy = a => Y1 - (a-AMIN)/(AMAX-AMIN)*(Y1-Y0);
+  BENCHES.forEach(b => {
+    const bl = D.baselines[b.id], rs = rowsOf(b.id);
+    const items = [
+      {label:'Random', acc:bl.random_uniform.accuracy, cost:bl.random_uniform.cost_usd_per_sample, kind:'base'},
+      ...FUSION_ORDER.map(l => { const r = rs.find(x=>x.label===l);
+        return {label:l.replace('Fusion ','')+' 档', acc:r.acc, cost:r.cps, kind:'fusion', row:r, full:l}; }),
+      {label:'BestSingle', acc:bl.best_single.accuracy, cost:bl.best_single.cost_usd_per_sample, kind:'base',
+       sub:bl.best_single.label},
+      {label:'Oracle', acc:bl.oracle.accuracy, cost:bl.oracle.cost_usd_per_sample, kind:'base'}
+    ].sort((a,b2)=>a.cost-b2.cost);
+    const p = panel(host, b, metaFor(b.id));
+    const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, role:'img',
+      'aria-label':`${b.name} 路由基线阶梯`}, p);
+    [0.75,0.80,0.85,0.90,0.95,1.00].forEach(a=>{
+      el('line',{x1:X0,x2:X1,y1:sy(a),y2:sy(a),stroke:'var(--rule)','stroke-width':1},svg);
+      txt(svg, X0-6, sy(a)+3, a.toFixed(2), {'text-anchor':'end'});
+    });
+    // Oracle / Random 参考线
+    el('line',{x1:X0,x2:X1,y1:sy(bl.oracle.accuracy),y2:sy(bl.oracle.accuracy),
+      stroke:'var(--oracle)','stroke-width':1.3,'stroke-dasharray':'6 3'},svg);
+    txt(svg, X1-2, sy(bl.oracle.accuracy)-4,
+      `Oracle ${bl.oracle.accuracy.toFixed(3)}　理论上界・全知选择・不可达`,
+      {'text-anchor':'end','font-size':8,fill:'var(--oracle)'});
+    el('line',{x1:X0,x2:X1,y1:sy(bl.random_uniform.accuracy),y2:sy(bl.random_uniform.accuracy),
+      stroke:'var(--random)','stroke-width':1.3,'stroke-dasharray':'1.5 3'},svg);
+    txt(svg, X1-2, sy(bl.random_uniform.accuracy)+9.5,
+      `Random ${bl.random_uniform.accuracy.toFixed(3)}（下界）`,
+      {'text-anchor':'end','font-size':8,fill:'var(--ink2)'});
+
+    const step = (X1-X0)/items.length;
+    items.forEach((it,i) => {
+      const x = X0 + step*(i+0.5);
+      const c = it.kind==='fusion' ? FUSION_COLOR[it.full] : 'var(--oracle)';
+      const g = el('g',{class: it.kind==='fusion' ? 'g-fusion' : 'g-fixed'},svg);
+      el('line',{x1:x,x2:x,y1:Y1,y2:sy(it.acc),stroke:c,'stroke-width':1.1,opacity:.35},g);
+      const hi = it.row && it.row.err > 0.05;
+      const n = mark(g, it.kind==='fusion'?'circle':'square', x, sy(it.acc), 5,
+        {fill:c, stroke: hi?'var(--flag)':'var(--panel)','stroke-width':hi?1.6:1.2,
+         'stroke-dasharray': hi?'2.2 1.6':null});
+      if(it.row) bindTip(n, tipHTML(it.row));
+      txt(g, x, sy(it.acc)-8, it.acc.toFixed(3), {'text-anchor':'middle','font-size':8.4,
+        fill:'var(--ink)','font-weight':600});
+      // x 轴标签（斜排，名称与成本合并成一行，避免两行相互压叠）
+      const t = txt(svg, 0, 0, '', {'text-anchor':'end','font-size':8.4,
+        fill: it.kind==='fusion' ? c : 'var(--ink)', 'font-weight': it.kind==='fusion'?600:400});
+      const n1 = el('tspan', {}, t); n1.textContent = it.label + (it.sub? '('+it.sub+')' : '');
+      const n2 = el('tspan', {fill:'var(--ink2)', 'font-weight':400}, t);
+      n2.textContent = '  ' + fmtUSD(it.cost);
+      t.setAttribute('transform', `translate(${x+4},${Y1+9}) rotate(-45)`);
+    });
+    el('line',{x1:X0,x2:X1,y1:Y1,y2:Y1,stroke:'var(--rule2)','stroke-width':1},svg);
+    el('path',{d:`M${X0-4} ${Y1+4}l4 -4l-4 -4`,fill:'none',stroke:'var(--ink2)','stroke-width':1.3},svg);
+    el('path',{d:`M${X0-4} ${Y1+8}l4 -4l-4 -4`,fill:'none',stroke:'var(--ink2)','stroke-width':1.3},svg);
+    txt(svg, X0, H-6, `按每题成本升序　y 轴起点 0.75　可路由题占比 ${(bl.oracle.routable_share*100).toFixed(1)}%`,
+      {'font-size':8.4});
+  });
+}
+
+/* ================= 图 4：延迟哑铃 ================= */
+function fig4(){
+  const host = document.getElementById('fig4-panels');
+  const W=360, ml=104, mr=46, mt=18, mb=34;
+  BENCHES.forEach(b => {
+    const rs = rowsOf(b.id).slice().sort((a,b2)=>a.p50-b2.p50);
+    const H = mt + rs.length*24 + mb;
+    const p = panel(host, b, metaFor(b.id));
+    const svg = el('svg',{viewBox:`0 0 ${W} ${H}`, role:'img',
+      'aria-label':`${b.name} 延迟 p50 p95 哑铃图`}, p);
+    const X0=ml, X1=W-mr, Y1=H-mb, TMIN=4, TMAX=900;
+    const sx = makeLogX(TMIN,TMAX,X0,X1);
+    [10,100].concat([TMIN,TMAX]).forEach(v=>{
+      el('line',{x1:sx(v),x2:sx(v),y1:mt-8,y2:Y1,stroke:'var(--rule)','stroke-width':1},svg);
+      txt(svg, sx(v), Y1+13, v+'s', {'text-anchor':'middle'});
+    });
+    rs.forEach((r,i)=>{
+      const y = mt + i*24 + 10, c = colorOf(r);
+      const g = el('g',{class:groupCls(r)},svg);
+      el('line',{x1:sx(r.p50),x2:sx(r.p95),y1:y,y2:y,stroke:c,'stroke-width':3,opacity:.32,
+        'stroke-linecap':'round'},g);
+      const a = el('circle',{cx:sx(r.p50),cy:y,r:4,fill:c,stroke:'var(--panel)','stroke-width':1.2},g);
+      const z = el('circle',{cx:sx(r.p95),cy:y,r:4,fill:'var(--panel)',stroke:c,'stroke-width':2},g);
+      bindTip(a, tipHTML(r)); bindTip(z, tipHTML(r));
+      txt(g, sx(r.p50)-7, y+3.2, r.p50.toFixed(0), {'text-anchor':'end','font-size':8.4,fill:'var(--ink2)'});
+      txt(g, sx(r.p95)+7, y+3.2, r.p95.toFixed(0), {'font-size':8.4,fill:'var(--ink)'});
+      const lab = txt(svg, X0-16, y+3.4, r.label, {'text-anchor':'end','font-size':9.4,
+        fill: r.fusion?c:'var(--ink)','font-weight': r.fusion?600:400});
+      lab.setAttribute('class', groupCls(r));
+    });
+    el('line',{x1:X0,x2:X0,y1:mt-8,y2:Y1,stroke:'var(--rule2)','stroke-width':1},svg);
+    txt(svg, (X0+X1)/2, H-4, '端到端耗时（对数轴）　实心=p50　空心=p95',
+      {'text-anchor':'middle','font-size':8.6});
+  });
+}
+
+/* ================= 图例 ================= */
+function legend(hostId, chartsId){
+  const host = document.getElementById(hostId);
+  const charts = document.getElementById(chartsId);
+  const swatch = (inner) => `<svg viewBox="0 0 16 12">${inner}</svg>`;
+  const fu = FUSION_ORDER.map(l =>
+    `<span class="it">${swatch(`<circle cx="8" cy="6" r="4.6" fill="${FUSION_COLOR[l]}"/>`)}${l.replace('Fusion ','')}</span>`).join('');
+  const sh = {circle:'<circle cx="8" cy="6" r="4" fill="var(--fixed)"/>',
+    square:'<rect x="4" y="2" width="8" height="8" fill="var(--fixed)"/>',
+    triangle:'<path d="M8 1.2L12.4 10H3.6Z" fill="var(--fixed)"/>',
+    diamond:'<path d="M8 .8L12.6 6L8 11.2L3.4 6Z" fill="var(--fixed)"/>',
+    cross:'<path d="M3 6H13M8 1V11" stroke="var(--fixed)" stroke-width="2.1" fill="none"/>'};
+  const fx = Object.keys(SHAPE).map(m =>
+    `<span class="it">${swatch(sh[SHAPE[m]])}${m}</span>`).join('');
+  host.innerHTML =
+    `<div class="grp" data-g="fusion" role="button" tabindex="0" aria-pressed="false">
+       <span class="lbl">Fusion 路由</span>${fu}</div>
+     <div class="grp" data-g="fixed" role="button" tabindex="0" aria-pressed="false">
+       <span class="lbl">固定模型（统一中性灰，靠形状区分）</span>${fx}</div>
+     <span class="hint">点图例只看一组　·　虚线描边 = 损耗 &gt; 5%　·　悬停任一标记看全部字段</span>`;
+  host.querySelectorAll('.grp').forEach(g => {
+    const toggle = () => {
+      const g2 = g.dataset.g, other = g2==='fusion' ? 'fixed' : 'fusion';
+      const on = charts.classList.toggle('dim-'+other);
+      charts.classList.remove('dim-'+g2);
+      host.querySelectorAll('.grp').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      g.setAttribute('aria-pressed', on ? 'true' : 'false');
+    };
+    g.addEventListener('click', toggle);
+    g.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); } });
+  });
+}
+
+/* ================= 表：输出 token ================= */
+function tokTable(){
+  const t = document.getElementById('tok-table');
+  let h = `<caption>每题平均输出 token（含推理 token）与 p95/p50 比值。max_tokens 口径不对称见 <a href="#D5">D5</a>。</caption>
+  <thead><tr><th>变体</th>`;
+  BENCHES.forEach(b => h += `<th>${b.short} 输出 token</th><th>${b.short} p95/p50</th>`);
+  h += `</tr></thead><tbody>`;
+  const order = FUSION_ORDER.concat(Object.keys(SHAPE));
+  order.forEach((l,i) => {
+    const isF = l.startsWith('Fusion');
+    h += `<tr class="${isF?'is-fusion':''}${i===3?' sep':''}"><td>${l}</td>`;
+    BENCHES.forEach(b => {
+      const r = rowsOf(b.id).find(x=>x.label===l);
+      h += `<td>${Math.round(r.otok)}</td><td>${(r.p95/r.p50).toFixed(1)}×</td>`;
+    });
+    h += `</tr>`;
+  });
+  t.innerHTML = h + `</tbody>`;
+}
+
+/* ================= 表：共同子集 ================= */
+function commonTable(){
+  const t = document.getElementById('common-table');
+  let h = `<caption>共同子集 = 该赛道上八个变体全部成功评分的题。全量 accuracy 的分母是各自的 n_scored，共同子集的分母对所有变体相同。</caption>
+  <thead><tr><th>变体</th>`;
+  BENCHES.forEach(b => h += `<th>${b.short} 全量</th><th>${b.short} 共同子集 (n=${D.common[b.id].n})</th><th>Δ pp</th>`);
+  h += `</tr></thead><tbody>`;
+  const order = FUSION_ORDER.concat(Object.keys(SHAPE));
+  order.forEach((l,i) => {
+    const isF = l.startsWith('Fusion');
+    h += `<tr class="${isF?'is-fusion':''}${i===3?' sep':''}"><td>${l}</td>`;
+    BENCHES.forEach(b => {
+      const c = D.common[b.id], v = c.v[l];
+      const full = v.full_c/v.full_n, com = v.c/c.n, d = (com-full)*100;
+      h += `<td>${full.toFixed(4)} <span class="tag">${v.full_c}/${v.full_n}</span></td>`+
+           `<td>${com.toFixed(4)} <span class="tag">${v.c}/${c.n}</span></td>`+
+           `<td${Math.abs(d)>=1.5?' class="warn"':''}>${d>=0?'+':''}${d.toFixed(1)}</td>`;
+    });
+    h += `</tr>`;
+  });
+  t.innerHTML = h + `</tbody>`;
+}
+
+/* ================= 表：披露 D1–D12 ================= */
+const DISC = [
+ ['D1','样本量','IFEval n=120、GPQA Diamond n=60、LiveCodeBench v6 n=120。<strong>单次运行，无重复采样</strong>，没有跑间方差估计。'],
+ ['D2','统计可区分性','GPQA 赛道内八个变体的 Wilson 95% 区间全部重叠（公共重叠段 0.817–0.931），该赛道任何准确率排名都不具统计意义。IFEval 上 gpt-6-astra [0.928, 0.991] 与 Fusion auto [0.802, 0.922] 不重叠，这个差距是真实的。'],
+ ['D3','样本损耗','Fusion 组 error_rate 0.8%–12.5%（最高 LCB auto 11.7%：upstream 13 + scorer 1）；固定模型 0%–8.3%。<strong>全部 41 次 <code>Lyra execution failed</code> 都出自 Fusion 组</strong>，固定模型侧的损耗全是连接被对端中断。准确率分母为 n_scored。'],
+ ['D4','损耗偏差复核','见<a href="#common">表 1 共同子集准确率</a>。IFEval / GPQA 上全量与共同子集差异均在 1pp 内；LCB 上 auto 0.972→0.990、claude-opus-5 0.949→0.970，损耗未系统性抬高 Fusion 分数。悲观口径（掉题按答错计）仍需并列：LCB auto 0.858、GPQA auto 0.817、LCB budget 0.800。'],
+ ['D5','max_tokens 不对称','GPQA / LCB：Fusion = 32768，固定模型 = 16384；IFEval 双方均为 8192。<strong>这两条赛道上 Fusion 有两倍输出预算，准确率不是同条件比较</strong>，成本与延迟也随之抬高。'],
+ ['D6','effort 口径','固定模型全部 <code>reasoning_effort=high</code>；Fusion 无该参数，由路由自行决定下游调用的推理配置。'],
+ ['D7','成本口径','全部为实际结算金额 <code>cost_usd_settled</code>，不使用公开报价估算（Fusion 无公开报价对照）。逐题成本优先按请求时长匹配账单，未匹配的题回退到该组运行均值：IFEval 11 条、GPQA 6 条、<strong>LCB 124 条</strong>——LCB 的 Oracle / Random / BestSingle 成本精度较低。'],
+ ['D8','延迟劣势','GPQA Fusion quality p50 185.6s / p95 833.0s，对照 gpt-6-astra 的 18.7s / 61.0s，约 9.9 倍 / 13.6 倍。LCB Fusion quality p95 804.4s、budget p95 482.7s。直接原因是每题输出 token 多约 30 倍。对交互式场景该延迟不可用。'],
+ ['D9','赛道饱和','IFEval 全部变体准确率落在 0.867–0.975，天花板效应明显；GPQA Diamond 的答案键自身有非零错误率（Epoch 分析），0.92 以上的差异需谨慎解读。五个固定模型「全员答对」的题占 75.8% / 80.0% / 68.9%。'],
+ ['D10','路由空间有限','Oracle 的可路由题占比仅 <strong>4.2%（IFEval）/ 5.0%（GPQA）/ 9.2%（LCB）</strong>，即这批题里「换个模型就能救回来」的比例本就很低；无人答对的题占 1.7% / 6.7% / 0%。<strong>这套题能证明便宜，证不了会选模型。</strong>'],
+ ['D11','路由决策记录不完整','仅 IFEval 的 lyra-auto 回传了 <code>lyra_selected_model</code>：119/119 全部为 <code>deepseek-v4-flash</code>，即该档退化成常量选择器、未做逐题决策。GPQA / LCB 的 Fusion 运行未回传路由元数据，实际选了什么模型无法从本次数据核实。'],
+ ['D12','时间窗','数据采集 2026-09-12T16:06 至 2026-09-14T22:41（UTC），报告生成于 2026-09-15。价格、模型版本、路由策略均为该时点快照，会过期。']
+];
+function discTable(){
+  let h = `<caption>D1–D12 逐项披露，默认展开，不折叠。图上的「口径」链接跳到对应行。</caption>
+  <thead><tr><th>#</th><th>披露项</th><th>内容</th></tr></thead><tbody>`;
+  DISC.forEach(([id,k,v]) => h += `<tr id="${id}"><td>${id}</td><td>${k}</td><td>${v}</td></tr>`);
+  document.getElementById('disc-table').innerHTML = h + `</tbody>`;
+}
+
+/* ================= 表：全量 ================= */
+function rawTable(){
+  const cols = [
+    ['label','变体'],['n_scored','n_scored/n_planned'],['err','损耗率'],['acc','accuracy'],
+    ['ci','Wilson 95%'],['cps','每题成本'],['cpps','按计划题数成本'],['cpc','每答对一题成本'],
+    ['settled','结算总额'],['p50','p50 (s)'],['p95','p95 (s)'],['itok','输入 tok/题'],
+    ['otok','输出 tok/题'],['max_tokens','max_tokens'],['effort','effort'],['err_kinds','错误类型']
+  ];
+  let h = `<caption>24 组全部字段，来自 data/report.csv。Fusion 行底色加深。</caption><thead><tr>`;
+  cols.forEach(c => h += `<th>${c[1]}</th>`); h += `</tr></thead><tbody>`;
+  BENCHES.forEach(b => {
+    h += `<tr class="sep"><td colspan="${cols.length}" style="background:#f0efe9;font-weight:600">${b.name}　n_planned=${rowsOf(b.id)[0].n_planned}</td></tr>`;
+    const order = FUSION_ORDER.concat(Object.keys(SHAPE));
+    order.forEach(l => {
+      const r = rowsOf(b.id).find(x=>x.label===l);
+      h += `<tr class="${r.fusion?'is-fusion':''}">`;
+      h += `<td>${r.label}</td><td>${r.n_scored}/${r.n_planned}</td>`+
+           `<td${r.err>0.05?' class="warn"':''}>${pct(r.err)}</td><td>${r.acc.toFixed(4)}</td>`+
+           `<td>[${r.wlo.toFixed(3)}, ${r.whi.toFixed(3)}]</td><td>${fmtUSD4(r.cps)}</td>`+
+           `<td>${fmtUSD4(r.cpps)}</td><td>${fmtUSD4(r.cpc)}</td><td>$${r.settled.toFixed(4)}</td>`+
+           `<td>${r.p50}</td><td>${r.p95}</td><td>${Math.round(r.itok)}</td><td>${Math.round(r.otok)}</td>`+
+           `<td>${r.max_tokens}</td><td>${r.effort||'—'}</td><td>${r.err_kinds||'—'}</td></tr>`;
+    });
+    const bl = D.baselines[b.id];
+    [['BestSingle（'+bl.best_single.label+'）',bl.best_single],
+     ['Oracle（理论上界）',bl.oracle],['Random（均匀随机）',bl.random_uniform]].forEach(([n,v])=>{
+      h += `<tr><td>${n}</td><td>—</td><td>—</td><td>${v.accuracy.toFixed(4)}</td><td>—</td>`+
+           `<td>${fmtUSD(v.cost_usd_per_sample)}</td>`+
+           `<td colspan="${cols.length-6}">—</td></tr>`;
+    });
+  });
+  document.getElementById('raw-table').innerHTML = h + `</tbody>`;
+}
+
+/* ================= 每节右上角「口径」跳转 ================= */
+function addJumps(){
+  const map = {fig1:'D2', fig2:'D3', fig3:'D10', fig4:'D8', common:'D4'};
+  for(const k in map){
+    const head = document.querySelector('#'+k+' .sec-head');
+    if(!head) continue;
+    const a = document.createElement('a');
+    a.className='jump'; a.href='#'+map[k]; a.textContent='口径 '+map[k]+' ↓';
+    head.querySelector('.sec-no').after(a);
+  }
+}
+
+fig1(); fig2(); fig3(); fig4();
+legend('legend1','charts1'); legend('legend2','charts2');
+legend('legend3','charts3'); legend('legend4','charts4');
+tokTable(); commonTable(); discTable(); rawTable(); addJumps();
+
+/* 打印前展开折叠区，保证 PDF 不丢信息 */
+let _reopen = [];
+addEventListener('beforeprint', () => {
+  _reopen = [...document.querySelectorAll('details:not([open])')];
+  _reopen.forEach(d => d.open = true);
+});
+addEventListener('afterprint', () => { _reopen.forEach(d => d.open = false); _reopen = []; });
+</script>
+</body>
+</html>
