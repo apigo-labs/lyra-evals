@@ -98,6 +98,8 @@ BrowseComp 当前冻结 `vohu-research-v2`：`glm-5.2` 搜索候选与 `kimi-k3`
 - `publications/`：显式 Website 发布包。
 - `context-kg/`：项目知识库。
 
+完整目录职责、数据流与活跃/历史遗留分类见 [docs/PROJECT-LAYOUT.md](docs/PROJECT-LAYOUT.md)。
+
 ### 模型与 effort 计划
 
 Console 的「新建评测 → 真实模型评测」可按连接选择 Harness 与多个 effort，配置预算策略、输出上限、时限和 seed；「生成并保存计划」只执行离线校验。
